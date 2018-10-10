@@ -228,7 +228,7 @@ public static class Methods
         {
             //Arrange
 
-            DependencyInjectionHelperCodeRefactoringProvider.WhatToDoWithParameters =
+            DependencyInjectionHelperCodeRefactoringProvider.WhatToDoWithArguments =
                 parameters => parameters.Select(_ => WhatToDoWithParameter.Remove).ToImmutableArray();
 
             var code =
