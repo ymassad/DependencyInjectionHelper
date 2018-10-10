@@ -26,13 +26,35 @@ namespace DependencyInjectionHelper
 
         public static Func<ImmutableArray<Parameter>, ImmutableArray<WhatToDoWithParameter>> WhatToDoWithParameters;
 
+        private static Dictionary<int, Type> ActionTypes = new Dictionary<int, Type>
+        {
+            [0] = typeof(Action),
+            [1] = typeof(Action<>),
+            [2] = typeof(Action<,>),
+            [3] = typeof(Action<,,>),
+            [4] = typeof(Action<,,,>),
+            [5] = typeof(Action<,,,,>),
+            [6] = typeof(Action<,,,,,>),
+        };
+
+        private static Dictionary<int, Type> FunctionTypes = new Dictionary<int, Type>
+        {
+            [0] = typeof(Func<>),
+            [1] = typeof(Func<,>),
+            [2] = typeof(Func<,,>),
+            [3] = typeof(Func<,,,>),
+            [4] = typeof(Func<,,,,>),
+            [5] = typeof(Func<,,,,,>),
+            [6] = typeof(Func<,,,,,,>)
+        };
+
         static DependencyInjectionHelperCodeRefactoringProvider()
         {
-
             WhatToDoWithParameters =
                 x => x.Select(_ => WhatToDoWithParameter.Keep)
                     .ToImmutableArray();
 
+            
         }
 
         public static Maybe<InvocationExpressionSyntax> GetInvocation(IdentifierNameSyntax node)
@@ -59,12 +81,10 @@ namespace DependencyInjectionHelper
 
             var node = root.FindNode(context.Span);
 
-            InvocationExpressionSyntax invocation = null;
-
-            if (!(node is IdentifierNameSyntax nameSynax))
+            if (!(node is IdentifierNameSyntax nameSyntax))
                 return;
 
-            var inv = GetInvocation(nameSynax);
+            var inv = GetInvocation(nameSyntax);
 
             if (inv.HasNoValue)
                 return;
@@ -72,111 +92,64 @@ namespace DependencyInjectionHelper
 
             var action = new MyCodeAction(
                 "Extract as a dependency",
-                c => ExtractDependency(context.Document, inv.GetValue(), nameSynax, semanticModel, root, c));
+                c => ExtractDependency(context.Document, root, inv.GetValue(), nameSyntax, semanticModel, c));
 
             context.RegisterRefactoring(action);
         }
 
         private async Task<Solution> ExtractDependency(Document document,
-            InvocationExpressionSyntax invocation,
-            IdentifierNameSyntax nameSyntax,
+            SyntaxNode documentRoot,
+            InvocationExpressionSyntax invocationSyntax,
+            IdentifierNameSyntax invokedMethodIdentifierSyntax,
             SemanticModel semanticModel,
-            SyntaxNode root,
             CancellationToken cancellationToken)
         {
-            //// Produce a reversed version of the type declaration's identifier token.
-            //var identifierToken = typeDecl.Identifier;
-            //var newName = new string(identifierToken.Text.ToCharArray().Reverse().ToArray());
-
-            //// Get the symbol representing the type to be renamed.
-            //var semanticModel = await document.GetSemanticModelAsync(cancellationToken);
-            //var typeSymbol = semanticModel.GetDeclaredSymbol(typeDecl, cancellationToken);
-
-            var method = invocation.Ancestors().OfType<MethodDeclarationSyntax>().First();
-
-            var invocationOperation = semanticModel.GetOperation(invocation) as IInvocationOperation;
-
-            var generator = SyntaxGenerator.GetGenerator(document);
-
-            var paramTypes = invocationOperation.TargetMethod.Parameters.Select(x => x.Type).ToArray();
-
-            var actionTypes = new Dictionary<int, Type>
-            {
-                [0] = typeof(Action),
-                [1] = typeof(Action<>),
-                [2] = typeof(Action<,>),
-                [3] = typeof(Action<,,>),
-                [4] = typeof(Action<,,,>),
-                [5] = typeof(Action<,,,,>),
-                [6] = typeof(Action<,,,,,>),
-            };
-
-
-
-            var functionTypes = new Dictionary<int, Type>
-            {
-                [0] = typeof(Func<>),
-                [1] = typeof(Func<,>),
-                [2] = typeof(Func<,,>),
-                [3] = typeof(Func<,,,>),
-                [4] = typeof(Func<,,,,>),
-                [5] = typeof(Func<,,,,,>),
-                [6] = typeof(Func<,,,,,,>)
-            };
-
-            INamedTypeSymbol functionType;
-            if (invocationOperation.TargetMethod.ReturnsVoid)
-            {
-                functionType = semanticModel.Compilation.GetTypeByMetadataName(actionTypes[paramTypes.Length].FullName);
-
-                if (paramTypes.Length > 0)
-                {
-                    functionType = functionType.Construct(paramTypes);
-                }
-
-
-            }
-            else
-            {
-                functionType = semanticModel.Compilation.GetTypeByMetadataName(functionTypes[paramTypes.Length].FullName);
-
- 
-                functionType = functionType.Construct(paramTypes.Concat(new []{invocationOperation.TargetMethod.ReturnType}).ToArray());
-                
-            }
-
-
-            var functionName = MakeFirstLetterSmall(nameSyntax.Identifier.Text);
-            var param = (ParameterSyntax)generator.ParameterDeclaration(functionName,
-                generator.TypeExpression(functionType));
-
-            var parameterListParameters = method.ParameterList;
-
-            var newList = parameterListParameters.AddParameters(param);
-
-
             var solution = document.Project.Solution;
 
-            var references = (await SymbolFinder.FindReferencesAsync(semanticModel.GetDeclaredSymbol(method), solution, cancellationToken)).ToList();
+            var containingMethod = invocationSyntax.Ancestors().OfType<MethodDeclarationSyntax>().First();
+
+            var invocationOperation = semanticModel.GetOperation(invocationSyntax) as IInvocationOperation;
+
+            if (invocationOperation == null)
+                return solution;
+
+            var syntaxGenerator = SyntaxGenerator.GetGenerator(document);
+
+            var replacementFunctionType =
+                DetermineReplacementFunctionType(semanticModel, invocationOperation);
+
+            var replacementFunctionParameterName = MakeFirstLetterSmall(invokedMethodIdentifierSyntax.Identifier.Text);
+
+            var param = (ParameterSyntax)syntaxGenerator.ParameterDeclaration(
+                replacementFunctionParameterName,
+                syntaxGenerator.TypeExpression(replacementFunctionType));
+
+            var containingMethodParameterList = containingMethod.ParameterList;
+
+            var updatedContainingMethodParameterList = containingMethodParameterList.AddParameters(param);
+
+            var usagesOfContainingMethod = (await SymbolFinder.FindReferencesAsync(semanticModel.GetDeclaredSymbol(containingMethod), solution, cancellationToken)).ToList();
 
             var invokedMethod = invocationOperation.TargetMethod.Name;
-
-            Dictionary<Document, SyntaxNode> documentRoots = new Dictionary<Document, SyntaxNode>();
 
             Dictionary<Document, List<(SyntaxNode oldNode, SyntaxNode newNode)>> nodesToReplace =
                 new Dictionary<Document, List<(SyntaxNode oldNode, SyntaxNode newNode)>>();
 
-            foreach (var reference in references.SelectMany(x => x.Locations))
+            var list = nodesToReplace.GetOrAdd(document, () => new List<(SyntaxNode oldNode, SyntaxNode newNode)>());
+
+            list.Add((containingMethodParameterList, updatedContainingMethodParameterList));
+            list.Add((invokedMethodIdentifierSyntax, invokedMethodIdentifierSyntax.WithIdentifier(SyntaxFactory.Identifier(replacementFunctionParameterName))));
+
+            foreach (var reference in usagesOfContainingMethod.SelectMany(x => x.Locations))
             {
                 var refDocument = reference.Document;
 
                 var refDocumentRoot = await refDocument.GetSyntaxRootAsync(cancellationToken);
 
-                var a = refDocumentRoot.FindNode(reference.Location.SourceSpan);
+                var refNode = refDocumentRoot.FindNode(reference.Location.SourceSpan);
 
-                if(!(a is IdentifierNameSyntax refNameSyntax))
+                if(!(refNode is IdentifierNameSyntax refNameSyntax))
                     continue;
-                ;
 
                 var inv = GetInvocation(refNameSyntax);
 
@@ -193,23 +166,15 @@ namespace DependencyInjectionHelper
 
                 list1.Add((oldArgumentList, newArgumentList));
 
-                documentRoots.AddIfNotExists(refDocument, () => refDocumentRoot);
-
-                int aaa = 0;
             }
 
-            var list = nodesToReplace.GetOrAdd(document, () => new List<(SyntaxNode oldNode, SyntaxNode newNode)>());
 
-            list.Add((parameterListParameters, newList));
-            list.Add((nameSyntax, nameSyntax.WithIdentifier(SyntaxFactory.Identifier(functionName))));
-
-            documentRoots.AddIfNotExists(document, () => root);
 
             Solution newSolution = solution;
 
             foreach (var doc in nodesToReplace.Keys)
             {
-                var droot = documentRoots[doc];
+                var droot = await doc.GetSyntaxRootAsync(cancellationToken);
 
                 var newdroot = droot.ReplaceNodes(nodesToReplace[document].Select(x => x.oldNode), (x, _) =>
                     {
@@ -219,21 +184,38 @@ namespace DependencyInjectionHelper
                 newSolution = newSolution.WithDocumentSyntaxRoot(doc.Id, newdroot);
             }
 
-
-
-            
-
             return newSolution;
 
 
-            //action1();
-            // Produce a new solution that has all references to that type renamed, including the declaration.
-            var originalSolution = solution;
-            //var optionSet = originalSolution.Workspace.Options;
-            //var newSolution = await Renamer.RenameSymbolAsync(document.Project.Solution, typeSymbol, newName, optionSet, cancellationToken).ConfigureAwait(false);
+        }
 
-            // Return the new solution with the now-uppercase type name.
-            return originalSolution;
+        private static INamedTypeSymbol DetermineReplacementFunctionType(SemanticModel semanticModel,
+            IInvocationOperation invocationOperation)
+        {
+            var invokedMethodParameterTypes = invocationOperation.TargetMethod.Parameters.Select(x => x.Type).ToArray();
+
+            INamedTypeSymbol replacementFunctionType;
+
+            if (invocationOperation.TargetMethod.ReturnsVoid)
+            {
+                replacementFunctionType =
+                    semanticModel.Compilation.GetTypeByMetadataName(ActionTypes[invokedMethodParameterTypes.Length].FullName);
+
+                if (invokedMethodParameterTypes.Length > 0)
+                {
+                    replacementFunctionType = replacementFunctionType.Construct(invokedMethodParameterTypes);
+                }
+            }
+            else
+            {
+                replacementFunctionType =
+                    semanticModel.Compilation.GetTypeByMetadataName(FunctionTypes[invokedMethodParameterTypes.Length].FullName);
+
+                replacementFunctionType = replacementFunctionType.Construct(invokedMethodParameterTypes
+                    .Concat(new[] {invocationOperation.TargetMethod.ReturnType}).ToArray());
+            }
+
+            return replacementFunctionType;
         }
 
         public static string MakeFirstLetterSmall(string str)
