@@ -6,7 +6,6 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.CodeAnalysis;
-using Microsoft.CodeAnalysis.CodeActions;
 using Microsoft.CodeAnalysis.CodeRefactorings;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -21,26 +20,6 @@ using Microsoft.CodeAnalysis.Text;
 
 namespace DependencyInjectionHelper
 {
-    public class Parameter
-    {
-        public Parameter(ITypeSymbol type, string name)
-        {
-            Type = type;
-            Name = name;
-        }
-
-        public ITypeSymbol Type { get; }
-
-        public string Name { get; }
-    }
-
-    public enum WhatToDoWithParameter
-    {
-        Keep,
-        Remove
-    }
-
-
     [ExportCodeRefactoringProvider(LanguageNames.CSharp, Name = nameof(DependencyInjectionHelperCodeRefactoringProvider)), Shared]
     public class DependencyInjectionHelperCodeRefactoringProvider : CodeRefactoringProvider
     {
@@ -264,58 +243,5 @@ namespace DependencyInjectionHelper
 
             return char.ToLower(str[0]) + str.Substring(1);
         }
-    }
-
-    public static class Extensions
-    {
-        public static TValue GetOrAdd<TKey, TValue>(
-            this Dictionary<TKey, TValue> dictionary, TKey key,
-            Func<TValue> factory)
-        {
-            if (dictionary.ContainsKey(key))
-                return dictionary[key];
-
-            var value = factory();
-
-            dictionary.Add(key, value);
-
-            return value;
-        }
-
-        public static void AddIfNotExists<TKey, TValue>(
-            this Dictionary<TKey, TValue> dictionary,
-            TKey key,
-            Func<TValue> factory)
-        {
-            if (dictionary.ContainsKey(key))
-                return;
-
-            dictionary.Add(key, factory());
-        }
-    }
-
-    public class MyCodeAction : CodeAction
-    {
-        public override string Title { get; }
-
-        private readonly Func<CancellationToken, Task<Solution>> func;
-
-        public MyCodeAction(string title, Func<CancellationToken, Task<Solution>> func)
-        {
-            Title = title;
-            this.func = func;
-        }
-
-        protected override Task<IEnumerable<CodeActionOperation>> ComputePreviewOperationsAsync(CancellationToken cancellationToken)
-        {
-            return Task.FromResult(Enumerable.Empty<CodeActionOperation>());
-        }
-
-        protected override Task<Solution> GetChangedSolutionAsync(CancellationToken cancellationToken)
-        {
-            return func(cancellationToken);
-        }
-
-
     }
 }
