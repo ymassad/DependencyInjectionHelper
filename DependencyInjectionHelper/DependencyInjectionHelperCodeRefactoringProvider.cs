@@ -19,7 +19,7 @@ namespace DependencyInjectionHelper
     public class DependencyInjectionHelperCodeRefactoringProvider : CodeRefactoringProvider
     {
 
-        public static Func<ImmutableArray<Parameter>, ImmutableArray<WhatToDoWithArgument>> WhatToDoWithArguments;
+        public static Func<ImmutableArray<Argument>, ImmutableArray<WhatToDoWithArgument>> WhatToDoWithArguments;
 
         private static Dictionary<int, Type> ActionTypes = new Dictionary<int, Type>
         {
@@ -107,12 +107,9 @@ namespace DependencyInjectionHelper
             var whatToDoWithArgs =
                 WhatToDoWithArguments(
                     invocationOperation.Arguments.Select(x => x.Parameter)
-                        .Select(x => new Parameter(x.Type, x.Name))
+                        .Select(x => new Argument(x.Type, x.Name))
                         .ToImmutableArray());
 
- 
-
- 
             var nodesToReplace =
                 new Dictionary<Document, List<NodeChange>>();
 

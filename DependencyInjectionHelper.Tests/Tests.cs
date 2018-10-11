@@ -492,7 +492,6 @@ public static class Methods
             Assert.AreEqual(expectedContentAfterRefactoring, actualContentAfterRefactoring);
         }
 
-
         private static TextSpan SelectSpanForIdentifier(SyntaxNode rootNode, string identifierName)
         {
             return rootNode.DescendantNodes()
