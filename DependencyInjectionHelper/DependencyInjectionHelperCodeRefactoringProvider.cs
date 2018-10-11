@@ -339,39 +339,44 @@ namespace DependencyInjectionHelper
                             .Select(x => syntaxGenerator.LambdaParameter(x))
                             .ToList();
 
+                    var invocationExpression = syntaxGenerator.InvocationExpression(
+                        SyntaxFactory.IdentifierName(invokedMethodName),
+                        argsAndWhatToDoWithThem
+                            .Select(x =>
+                            {
+                                if (x.whatTodo == WhatToDoWithArgument.Remove)
+                                {
+                                    var argumentSyntax = (ArgumentSyntax)x.arg.Syntax;
+
+                                    if (semanticModel.GetSymbolInfo(argumentSyntax.Expression).Symbol is
+                                        IParameterSymbol parameter)
+                                    {
+                                        var callerArgumentForParameter = refInvocationOperation.Arguments
+                                            .Where(a => a.Parameter.Equals(parameter)).Select(a => a.Syntax).Single();
+
+                                        return callerArgumentForParameter;
+                                    }
+
+                                    return argumentSyntax;
+                                }
+                                else //Keep
+                                {
+                                    return syntaxGenerator.IdentifierName(x.arg.Parameter.Name);
+                                }
+                            }));
 
                     if (invokedMethod.ReturnsVoid)
                     {
                         return (LambdaExpressionSyntax) syntaxGenerator.VoidReturningLambdaExpression(
                             lambdaParameters,
-                            syntaxGenerator.InvocationExpression(
-                                SyntaxFactory.IdentifierName(invokedMethodName),
-                                argsAndWhatToDoWithThem
-                                    .Select(x =>
-                                    {
-                                        if (x.whatTodo == WhatToDoWithArgument.Remove)
-                                        {
-                                            var argumentSyntax = (ArgumentSyntax)x.arg.Syntax;
-
-                                            if (semanticModel.GetSymbolInfo(argumentSyntax.Expression).Symbol is
-                                                IParameterSymbol parameter)
-                                            {
-                                                var callerArgumentForParameter = refInvocationOperation.Arguments
-                                                    .Where(a => a.Parameter.Equals(parameter)).Select(a => a.Syntax).Single();
-
-                                                return callerArgumentForParameter;
-                                            }
-
-                                            return argumentSyntax;
-                                        }
-                                        else //Keep
-                                        {
-                                            return syntaxGenerator.IdentifierName(x.arg.Parameter.Name);
-                                        }
-                                    })));
+                            invocationExpression);
                     }
-
-                    throw new Exception("Unsupported yet");
+                    else
+                    {
+                        return (LambdaExpressionSyntax)syntaxGenerator.ValueReturningLambdaExpression(
+                            lambdaParameters,
+                            invocationExpression);
+                    }
                 }
 
                 var arguments = oldArgumentList.Arguments;
