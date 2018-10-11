@@ -133,7 +133,8 @@ namespace DependencyInjectionHelper
                     containingMethod,
                     documentRoot,
                     invocationOperation,
-                    whatToDoWithArgs);
+                    whatToDoWithArgs,
+                    invocationSyntax);
 
             AddNewChangeToDocument(
                 document,
@@ -165,19 +166,23 @@ namespace DependencyInjectionHelper
             return await UpdateSolution(cancellationToken, solution, nodesToReplace);
         }
 
-        private static (NodeChange parameterListChange, string replacementFunctionParameterName, ImmutableArray<IParameterSymbol> parametersToRemove) GetChangeToContainingMethodParameters(
-            Document document,
-            IdentifierNameSyntax invokedMethodIdentifierSyntax,
-            SemanticModel semanticModel,
-            ImmutableArray<(IArgumentOperation arg, WhatToDoWithArgument whatTodo)> argsAndWhatToDoWithThem,
-            MethodDeclarationSyntax containingMethod,
-            SyntaxNode documentRoot,
-            IInvocationOperation invocationOperation,
-            ImmutableArray<WhatToDoWithArgument> whatToDoWithArgs)
+        private static (NodeChange parameterListChange, string replacementFunctionParameterName,
+            ImmutableArray<IParameterSymbol> parametersToRemove) GetChangeToContainingMethodParameters(
+                Document document,
+                IdentifierNameSyntax invokedMethodIdentifierSyntax,
+                SemanticModel semanticModel,
+                ImmutableArray<(IArgumentOperation arg, WhatToDoWithArgument whatTodo)> argsAndWhatToDoWithThem,
+                MethodDeclarationSyntax containingMethod,
+                SyntaxNode documentRoot,
+                IInvocationOperation invocationOperation,
+                ImmutableArray<WhatToDoWithArgument> whatToDoWithArgs,
+                InvocationExpressionSyntax invocationSyntax)
         {
-            var parametersUsedInArgumentsToRemove =
+            var parametersUsedInArgumentsToRemoveAndInInvokedExpression =
                 argsAndWhatToDoWithThem.Where(x => x.whatTodo == WhatToDoWithArgument.Remove)
-                    .SelectMany(x => x.arg.Syntax.DescendantNodes().OfType<IdentifierNameSyntax>())
+                    .Select(x => x.arg.Syntax)
+                    .Concat(new []{ invocationSyntax.Expression })
+                    .SelectMany(x => x.DescendantNodes().OfType<IdentifierNameSyntax>())
                     .Select(x => semanticModel.GetSymbolInfo(x).Symbol)
                     .OfType<IParameterSymbol>()
                     .Distinct()
@@ -188,20 +193,20 @@ namespace DependencyInjectionHelper
                     .Select(x => x.arg.Syntax)
                     .ToList();
 
-            var identifierNameNodesOutSideOfArgumentsToRemoveThatRepresentParameters =
+            var identifierNameNodesOutSideOfArgumentsToRemoveAndOutsideOfInvokedExpressionThatRepresentParameters =
                 containingMethod.DescendantNodes()
                     .OfType<IdentifierNameSyntax>()
-                    .Where(x => !argumentsToRemove.Any(argToRemove => argToRemove.Contains(x)))
+                    .Where(x => !argumentsToRemove.Any(argToRemove => argToRemove.Contains(x)) && !invocationSyntax.Expression.Contains(x))
                     .Select(x => (node: x, parameter: semanticModel.GetSymbolInfo(x).Symbol as IParameterSymbol))
                     .Where(x => !(x.parameter is null))
                     .ToList();
 
             List<IParameterSymbol> parametersToRemove = new List<IParameterSymbol>();
 
-            foreach (var param in parametersUsedInArgumentsToRemove)
+            foreach (var param in parametersUsedInArgumentsToRemoveAndInInvokedExpression)
             {
                 var anyUsageOutsideOfArgumentsToRemove =
-                    identifierNameNodesOutSideOfArgumentsToRemoveThatRepresentParameters.Any(x =>
+                    identifierNameNodesOutSideOfArgumentsToRemoveAndOutsideOfInvokedExpressionThatRepresentParameters.Any(x =>
                         x.parameter.Equals(param));
 
                 if (!anyUsageOutsideOfArgumentsToRemove)
@@ -239,8 +244,10 @@ namespace DependencyInjectionHelper
             return (parameterListChange, replacementFunctionParameterName, parametersToRemove.ToImmutableArray());
         }
 
-        private static NodeChange GetMethodInvocationChange(InvocationExpressionSyntax invocationSyntax,
-            IdentifierNameSyntax invokedMethodIdentifierSyntax, ImmutableArray<(IArgumentOperation arg, WhatToDoWithArgument whatTodo)> argsAndWhatToDoWithThem,
+        private static NodeChange GetMethodInvocationChange(
+            InvocationExpressionSyntax invocationSyntax,
+            IdentifierNameSyntax invokedMethodIdentifierSyntax,
+            ImmutableArray<(IArgumentOperation arg, WhatToDoWithArgument whatTodo)> argsAndWhatToDoWithThem,
             string replacementFunctionParameterName)
         {
             var updatedArguments =
@@ -251,10 +258,11 @@ namespace DependencyInjectionHelper
 
             var updatedInvocationSyntax =
                 invocationSyntax
-                    .ReplaceNode(invokedMethodIdentifierSyntax,
+                    .ReplaceNode(invocationSyntax.Expression,
                         invokedMethodIdentifierSyntax.WithIdentifier(
                             SyntaxFactory.Identifier(replacementFunctionParameterName)))
                     .WithArgumentList(SyntaxFactory.ArgumentList(updatedArguments));
+
 
             return new NodeChange(invocationSyntax, updatedInvocationSyntax);
         }

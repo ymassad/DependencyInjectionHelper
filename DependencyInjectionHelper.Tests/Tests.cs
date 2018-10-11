@@ -10,8 +10,6 @@ namespace DependencyInjectionHelper.Tests
     [TestFixture]
     public class Tests
     {
-
-
         [Test]
         public void InvokingSimpleStaticMethod()
         {
@@ -475,6 +473,75 @@ public static class Methods
     {
         return 1;
     }
+}";
+
+            var expectedContentAfterRefactoring =
+                Utilities.NormalizeCode(
+                    expectedChangedCode);
+
+            //Act
+            var actualContentAfterRefactoring =
+                Utilities.NormalizeCode(
+                    Utilities.ApplyRefactoring(
+                        code,
+                        x => SelectSpanForIdentifier(x, "DoSomethingElse")));
+
+            //Assert
+            Assert.AreEqual(expectedContentAfterRefactoring, actualContentAfterRefactoring);
+        }
+
+        [Test]
+        public void InvokingSimpleInstanceMethodOnParameter()
+        {
+            //Arrange
+            var code =
+                @"
+using System;
+
+public class Class1
+{
+    public void DoSomethingElse()
+    {
+    }
+}
+
+public static class Methods
+{
+    public static void Caller()
+    {
+        DoSomething(new Class1());
+    }
+
+    public static void DoSomething(Class1 class1)
+    {
+        class1.DoSomethingElse();
+    }
+}";
+
+            var expectedChangedCode =
+                @"
+using System;
+
+public class Class1
+{
+    public void DoSomethingElse()
+    {
+    }
+}
+
+public static class Methods
+{
+
+    public static void Caller()
+    {
+        DoSomething(new Class1().DoSomethingElse);
+    }
+
+    public static void DoSomething(Action doSomethingElse)
+    {
+        doSomethingElse();
+    }
+
 }";
 
             var expectedContentAfterRefactoring =
