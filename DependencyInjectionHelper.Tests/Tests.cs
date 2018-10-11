@@ -229,7 +229,7 @@ public static class Methods
             //Arrange
 
             DependencyInjectionHelperCodeRefactoringProvider.WhatToDoWithArguments =
-                parameters => parameters.Select(_ => WhatToDoWithParameter.Remove).ToImmutableArray();
+                parameters => parameters.Select(_ => WhatToDoWithArgument.Remove).ToImmutableArray();
 
             var code =
                 @"

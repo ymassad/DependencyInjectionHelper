@@ -1,6 +1,6 @@
 namespace DependencyInjectionHelper
 {
-    public enum WhatToDoWithParameter
+    public enum WhatToDoWithArgument
     {
         Keep,
         Remove

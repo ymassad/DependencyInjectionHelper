@@ -19,7 +19,7 @@ namespace DependencyInjectionHelper
     public class DependencyInjectionHelperCodeRefactoringProvider : CodeRefactoringProvider
     {
 
-        public static Func<ImmutableArray<Parameter>, ImmutableArray<WhatToDoWithParameter>> WhatToDoWithArguments;
+        public static Func<ImmutableArray<Parameter>, ImmutableArray<WhatToDoWithArgument>> WhatToDoWithArguments;
 
         private static Dictionary<int, Type> ActionTypes = new Dictionary<int, Type>
         {
@@ -46,7 +46,7 @@ namespace DependencyInjectionHelper
         static DependencyInjectionHelperCodeRefactoringProvider()
         {
             WhatToDoWithArguments =
-                x => x.Select(_ => WhatToDoWithParameter.Keep)
+                x => x.Select(_ => WhatToDoWithArgument.Keep)
                     .ToImmutableArray();
         }
 
@@ -135,7 +135,7 @@ namespace DependencyInjectionHelper
                     .ToList();
 
             var updateArguments =
-                argsAndWhatToDoWithThem.Where(x => x.whatTodo == WhatToDoWithParameter.Remove)
+                argsAndWhatToDoWithThem.Where(x => x.whatTodo == WhatToDoWithArgument.Remove)
                     .Select(x => x.arg)
                     .Aggregate(invocationSyntax.ArgumentList.Arguments,
                         (args, arg) => args.Remove((ArgumentSyntax) arg.Syntax));
@@ -197,7 +197,7 @@ namespace DependencyInjectionHelper
             MethodDeclarationSyntax containingMethod,
             Solution solution,
             IMethodSymbol invokedMethod,
-            ImmutableArray<WhatToDoWithParameter> whatToDoWithArgs)
+            ImmutableArray<WhatToDoWithArgument> whatToDoWithArgs)
         {
             List<(Document document, NodeChange change)> localChanges = new List<(Document document, NodeChange change)>();
 
@@ -226,7 +226,7 @@ namespace DependencyInjectionHelper
 
                 var oldArgumentList = refInvocation.ArgumentList;
 
-                var anyArgumentsToRemove = whatToDoWithArgs.Any(x => x == WhatToDoWithParameter.Remove);
+                var anyArgumentsToRemove = whatToDoWithArgs.Any(x => x == WhatToDoWithArgument.Remove);
 
                 var syntaxGenerator = SyntaxGenerator.GetGenerator(refDocument);
 
@@ -265,7 +265,7 @@ namespace DependencyInjectionHelper
                 SemanticModel semanticModel,
                 IInvocationOperation invocationOperation,
                 MethodDeclarationSyntax containingMethod,
-                ImmutableArray<WhatToDoWithParameter> whatToDoWithArgs)
+                ImmutableArray<WhatToDoWithArgument> whatToDoWithArgs)
         {
             var syntaxGenerator = SyntaxGenerator.GetGenerator(document);
 
@@ -290,12 +290,12 @@ namespace DependencyInjectionHelper
         private static INamedTypeSymbol DetermineReplacementFunctionType(
             SemanticModel semanticModel,
             IInvocationOperation invocationOperation,
-            ImmutableArray<WhatToDoWithParameter> whatToDoWithArgs)
+            ImmutableArray<WhatToDoWithArgument> whatToDoWithArgs)
         {
             var typesOfParametersToKeep =
                 invocationOperation.Arguments.Select(x => x.Parameter)
                     .Zip(whatToDoWithArgs, (param, whatToDo) => (param, whatToDo))
-                    .Where(x => x.whatToDo == WhatToDoWithParameter.Keep)
+                    .Where(x => x.whatToDo == WhatToDoWithArgument.Keep)
                     .Select(x => x.param.Type).ToArray();
 
             INamedTypeSymbol replacementFunctionType;
