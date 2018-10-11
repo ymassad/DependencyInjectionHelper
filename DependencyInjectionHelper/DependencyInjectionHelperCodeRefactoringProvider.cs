@@ -95,6 +95,8 @@ namespace DependencyInjectionHelper
         {
             var solution = document.Project.Solution;
 
+            var documentRoot = await document.GetSyntaxRootAsync(cancellationToken);
+
             var containingMethod = invocationSyntax.Ancestors().OfType<MethodDeclarationSyntax>().First();
 
             var invocationOperation = semanticModel.GetOperation(invocationSyntax) as IInvocationOperation;
@@ -108,16 +110,9 @@ namespace DependencyInjectionHelper
                         .Select(x => new Parameter(x.Type, x.Name))
                         .ToImmutableArray());
 
-            var (parameterListChange , replacementFunctionParameterName) =
-                UpdateParameterListToContainNewDependency(
-                    document,
-                    invokedMethodIdentifierSyntax,
-                    semanticModel,
-                    invocationOperation,
-                    containingMethod,
-                    whatToDoWithArgs);
+ 
 
-
+ 
             var nodesToReplace =
                 new Dictionary<Document, List<NodeChange>>();
 
@@ -126,37 +121,44 @@ namespace DependencyInjectionHelper
                 nodesToReplace.GetOrAdd(doc, () => new List<NodeChange>()).Add(change);
             }
 
-            AddNewChangeToDocument(document, new NodeChange(parameterListChange.OldNode, parameterListChange.NewNode));
-
 
             var argsAndWhatToDoWithThem =
                 invocationOperation.Arguments
                     .Zip(whatToDoWithArgs, (arg, whatTodo) => (arg, whatTodo))
-                    .ToList();
+                    .ToImmutableArray();
 
-            var updateArguments =
-                argsAndWhatToDoWithThem.Where(x => x.whatTodo == WhatToDoWithArgument.Remove)
-                    .Select(x => x.arg)
-                    .Aggregate(invocationSyntax.ArgumentList.Arguments,
-                        (args, arg) => args.Remove((ArgumentSyntax) arg.Syntax));
+            var (parameterListChange, replacementFunctionParameterName, parametersToRemove) =
+                GetChangeToContainingMethodParameters(
+                    document,
+                    invokedMethodIdentifierSyntax,
+                    semanticModel,
+                    argsAndWhatToDoWithThem,
+                    containingMethod,
+                    documentRoot,
+                    invocationOperation,
+                    whatToDoWithArgs);
 
+            AddNewChangeToDocument(
+                document,
+                parameterListChange);
 
-            var updatedInvocationSyntax =
-                invocationSyntax
-                    .ReplaceNode(invokedMethodIdentifierSyntax,
-                        invokedMethodIdentifierSyntax.WithIdentifier(
-                            SyntaxFactory.Identifier(replacementFunctionParameterName)))
-                    .WithArgumentList(SyntaxFactory.ArgumentList(updateArguments));
-                    
-                    
+            var nodeChange =
+                GetMethodInvocationChange(
+                    invocationSyntax,
+                    invokedMethodIdentifierSyntax,
+                    argsAndWhatToDoWithThem,
+                    replacementFunctionParameterName);
 
-            AddNewChangeToDocument(document, new NodeChange(invocationSyntax, updatedInvocationSyntax));
-
-
-
+            AddNewChangeToDocument(document, nodeChange);
 
             var changesToCallers = await GetChangesToCallers(
-                semanticModel, cancellationToken, containingMethod, solution, invocationOperation.TargetMethod, whatToDoWithArgs);
+                semanticModel,
+                cancellationToken,
+                containingMethod,
+                solution,
+                invocationOperation.TargetMethod,
+                argsAndWhatToDoWithThem,
+                parametersToRemove);
 
             foreach (var changeToCallers in changesToCallers)
             {
@@ -166,7 +168,100 @@ namespace DependencyInjectionHelper
             return await UpdateSolution(cancellationToken, solution, nodesToReplace);
         }
 
-  
+        private static (NodeChange parameterListChange, string replacementFunctionParameterName, ImmutableArray<IParameterSymbol> parametersToRemove) GetChangeToContainingMethodParameters(
+            Document document,
+            IdentifierNameSyntax invokedMethodIdentifierSyntax,
+            SemanticModel semanticModel,
+            ImmutableArray<(IArgumentOperation arg, WhatToDoWithArgument whatTodo)> argsAndWhatToDoWithThem,
+            MethodDeclarationSyntax containingMethod,
+            SyntaxNode documentRoot,
+            IInvocationOperation invocationOperation,
+            ImmutableArray<WhatToDoWithArgument> whatToDoWithArgs)
+        {
+            var parametersUsedInArgumentsToRemove =
+                argsAndWhatToDoWithThem.Where(x => x.whatTodo == WhatToDoWithArgument.Remove)
+                    .SelectMany(x => x.arg.Syntax.DescendantNodes().OfType<IdentifierNameSyntax>())
+                    .Select(x => semanticModel.GetSymbolInfo(x).Symbol)
+                    .OfType<IParameterSymbol>()
+                    .Distinct()
+                    .ToList();
+
+            var argumentsToRemove =
+                argsAndWhatToDoWithThem.Where(x => x.whatTodo == WhatToDoWithArgument.Remove)
+                    .Select(x => x.arg.Syntax)
+                    .ToList();
+
+            var identifierNameNodesOutSideOfArgumentsToRemoveThatRepresentParameters =
+                containingMethod.DescendantNodes()
+                    .OfType<IdentifierNameSyntax>()
+                    .Where(x => !argumentsToRemove.Any(argToRemove => argToRemove.Contains(x)))
+                    .Select(x => (node: x, parameter: semanticModel.GetSymbolInfo(x).Symbol as IParameterSymbol))
+                    .Where(x => !(x.parameter is null))
+                    .ToList();
+
+            List<IParameterSymbol> parametersToRemove = new List<IParameterSymbol>();
+
+            foreach (var param in parametersUsedInArgumentsToRemove)
+            {
+                var anyUsageOutsideOfArgumentsToRemove =
+                    identifierNameNodesOutSideOfArgumentsToRemoveThatRepresentParameters.Any(x =>
+                        x.parameter.Equals(param));
+
+                if (!anyUsageOutsideOfArgumentsToRemove)
+                {
+                    parametersToRemove.Add(param);
+                }
+            }
+
+            var parameterSyntaxesToRemove = parametersToRemove.Select(x => x.Locations.Single())
+                .Select(location => (ParameterSyntax) documentRoot.FindNode(location.SourceSpan))
+                .ToList();
+
+            var replacementFunctionParameter =
+                DetermineNewReplacementFunctionParameter(
+                    document, invokedMethodIdentifierSyntax, semanticModel, invocationOperation, whatToDoWithArgs);
+
+            var replacementFunctionParameterName = replacementFunctionParameter.Identifier.Text;
+
+            var containingMethodParameterList = containingMethod.ParameterList;
+
+            var parameters = containingMethodParameterList.Parameters;
+
+            foreach (var parameterSyntaxToRemove in parameterSyntaxesToRemove)
+            {
+                parameters = parameters.Remove(parameterSyntaxToRemove);
+            }
+
+            parameters = parameters.Add(replacementFunctionParameter);
+
+            var updatedContainingMethodParameterList =
+                containingMethodParameterList.WithParameters(parameters);
+
+            var parameterListChange = new NodeChange(containingMethodParameterList, updatedContainingMethodParameterList);
+
+            return (parameterListChange, replacementFunctionParameterName, parametersToRemove.ToImmutableArray());
+        }
+
+        private static NodeChange GetMethodInvocationChange(InvocationExpressionSyntax invocationSyntax,
+            IdentifierNameSyntax invokedMethodIdentifierSyntax, ImmutableArray<(IArgumentOperation arg, WhatToDoWithArgument whatTodo)> argsAndWhatToDoWithThem,
+            string replacementFunctionParameterName)
+        {
+            var updatedArguments =
+                argsAndWhatToDoWithThem.Where(x => x.whatTodo == WhatToDoWithArgument.Remove)
+                    .Select(x => x.arg)
+                    .Aggregate(invocationSyntax.ArgumentList.Arguments,
+                        (args, arg) => args.Remove((ArgumentSyntax) arg.Syntax));
+
+            var updatedInvocationSyntax =
+                invocationSyntax
+                    .ReplaceNode(invokedMethodIdentifierSyntax,
+                        invokedMethodIdentifierSyntax.WithIdentifier(
+                            SyntaxFactory.Identifier(replacementFunctionParameterName)))
+                    .WithArgumentList(SyntaxFactory.ArgumentList(updatedArguments));
+
+            return new NodeChange(invocationSyntax, updatedInvocationSyntax);
+        }
+
 
         private static async Task<Solution> UpdateSolution(
             CancellationToken cancellationToken,
@@ -197,9 +292,10 @@ namespace DependencyInjectionHelper
             MethodDeclarationSyntax containingMethod,
             Solution solution,
             IMethodSymbol invokedMethod,
-            ImmutableArray<WhatToDoWithArgument> whatToDoWithArgs)
+            ImmutableArray<(IArgumentOperation arg, WhatToDoWithArgument whatTodo)> argsAndWhatToDoWithThem,
+            ImmutableArray<IParameterSymbol> parametersToRemove)
         {
-            List<(Document document, NodeChange change)> localChanges = new List<(Document document, NodeChange change)>();
+            List<(Document document, NodeChange change)> changes = new List<(Document document, NodeChange change)>();
 
             var usagesOfContainingMethod =
                 (await SymbolFinder.FindReferencesAsync(semanticModel.GetDeclaredSymbol(containingMethod), solution,
@@ -226,7 +322,7 @@ namespace DependencyInjectionHelper
 
                 var oldArgumentList = refInvocation.ArgumentList;
 
-                var anyArgumentsToRemove = whatToDoWithArgs.Any(x => x == WhatToDoWithArgument.Remove);
+                var anyArgumentsToRemove = argsAndWhatToDoWithThem.Any(x => x.whatTodo == WhatToDoWithArgument.Remove);
 
                 var syntaxGenerator = SyntaxGenerator.GetGenerator(refDocument);
 
@@ -234,38 +330,64 @@ namespace DependencyInjectionHelper
 
                 var invokedMethodName = invokedMethod.Name;
 
+                LambdaExpressionSyntax CreateLambdaExpression()
+                {
+                    if (invokedMethod.ReturnsVoid)
+                    {
+                        return (LambdaExpressionSyntax) syntaxGenerator.VoidReturningLambdaExpression(
+                            Enumerable.Empty<SyntaxNode>(),
+                            syntaxGenerator.InvocationExpression(
+                                SyntaxFactory.IdentifierName(invokedMethodName),
+                                argsAndWhatToDoWithThem.Where(x => x.whatTodo == WhatToDoWithArgument.Remove)
+                                    .Select(x =>
+                                    {
+                                        var argumentSyntax = (ArgumentSyntax) x.arg.Syntax;
 
-                //object Get123()
-                //{
-                //    if (invokedMethod.ReturnsVoid)
-                //    {
-                //        return syntaxGenerator.VoidReturningLambdaExpression(
-                //            Enumerable.Empty<SyntaxNode>(),
-                //            syntaxGenerator.InvocationExpression(
-                //                SyntaxFactory.IdentifierName(invokedMethodName), ))
-                //    }
-                //}
+                                        if (semanticModel.GetSymbolInfo(argumentSyntax.Expression).Symbol is
+                                            IParameterSymbol parameter)
+                                        {
+                                            var callerArgumentForParameter = refInvocationOperation.Arguments
+                                                .Where(a => a.Parameter.Equals(parameter)).Select(a => a.Syntax).Single();
+
+                                            return callerArgumentForParameter;
+                                        }
+
+                                        return argumentSyntax;
+                                    })));
+                    }
+
+                    throw new Exception("Unsupported yet");
+                }
+
+                var arguments = oldArgumentList.Arguments;
+
+                var argumentsToRemove =
+                    refInvocationOperation.Arguments.Where(x => parametersToRemove.Contains(x.Parameter))
+                        .Select(x => (ArgumentSyntax) x.Syntax);
+
+                foreach (var arg in argumentsToRemove)
+                    arguments = arguments.Remove(arg);
+
+                arguments = arguments.Add(SyntaxFactory.Argument(
+                    anyArgumentsToRemove
+                        ? (ExpressionSyntax) CreateLambdaExpression()
+                        : SyntaxFactory.IdentifierName(invokedMethodName)));
 
                 var newArgumentList =
-                    //anyArgumentsToRemove
-                    //? syntaxGenerator.lambda
+                    oldArgumentList.WithArguments(arguments);
+                        
 
-                    //: oldArgumentList.AddArguments(
-                    SyntaxFactory.Argument(SyntaxFactory.IdentifierName(invokedMethodName));
-
-                localChanges.Add((refDocument, new NodeChange(oldArgumentList, newArgumentList)));
+                changes.Add((refDocument, new NodeChange(oldArgumentList, newArgumentList)));
             }
 
-            return localChanges;
+            return changes;
         }
 
-        private static (NodeChange change, string replacementFunctionParameterName)
-            UpdateParameterListToContainNewDependency(Document document,
-                IdentifierNameSyntax invokedMethodIdentifierSyntax,
-                SemanticModel semanticModel,
-                IInvocationOperation invocationOperation,
-                MethodDeclarationSyntax containingMethod,
-                ImmutableArray<WhatToDoWithArgument> whatToDoWithArgs)
+  
+
+        private static ParameterSyntax DetermineNewReplacementFunctionParameter(Document document,
+            IdentifierNameSyntax invokedMethodIdentifierSyntax, SemanticModel semanticModel,
+            IInvocationOperation invocationOperation, ImmutableArray<WhatToDoWithArgument> whatToDoWithArgs)
         {
             var syntaxGenerator = SyntaxGenerator.GetGenerator(document);
 
@@ -274,17 +396,9 @@ namespace DependencyInjectionHelper
 
             var replacementFunctionParameterName = MakeFirstLetterSmall(invokedMethodIdentifierSyntax.Identifier.Text);
 
-            var replacementFunctionParameter = (ParameterSyntax) syntaxGenerator.ParameterDeclaration(
+            return (ParameterSyntax) syntaxGenerator.ParameterDeclaration(
                 replacementFunctionParameterName,
                 syntaxGenerator.TypeExpression(replacementFunctionType));
-
-            var containingMethodParameterList = containingMethod.ParameterList;
-
-            var updatedContainingMethodParameterList =
-                containingMethodParameterList.AddParameters(replacementFunctionParameter);
-
-            var parameterListChange = new NodeChange(containingMethodParameterList, updatedContainingMethodParameterList);
-            return (parameterListChange, replacementFunctionParameterName);
         }
 
         private static INamedTypeSymbol DetermineReplacementFunctionType(

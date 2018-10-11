@@ -224,12 +224,78 @@ public static class Methods
         }
 
         [Test]
-        public void InvokingStaticMethodThatTakesInt_PassedIntIsAParameter_AndThereIsACaller_WeChooseToRemoveParameter()
+        public void InvokingStaticMethodThatTakesInt_PassedIntIsAConstantValue_AndThereIsACaller_AndWeChooseToRemoveArgument()
         {
             //Arrange
 
             DependencyInjectionHelperCodeRefactoringProvider.WhatToDoWithArguments =
-                parameters => parameters.Select(_ => WhatToDoWithArgument.Remove).ToImmutableArray();
+                arguments => arguments.Select(_ => WhatToDoWithArgument.Remove).ToImmutableArray();
+
+            var code =
+                @"
+using System;
+
+public static class Methods
+{
+    public static void Caller()
+    {
+        DoSomething();
+    }
+
+    public static void DoSomething()
+    {
+        DoSomethingElse(1);
+    }
+
+    public static void DoSomethingElse(int param1)
+    {
+    }
+}";
+
+            var expectedChangedCode =
+                @"
+using System;
+
+public static class Methods
+{
+    public static void Caller()
+    {
+        DoSomething(() => DoSomethingElse(1));
+    }
+
+    public static void DoSomething(Action doSomethingElse)
+    {
+        doSomethingElse();
+    }
+
+    public static void DoSomethingElse(int param1)
+    {
+    }
+}";
+
+            var expectedContentAfterRefactoring =
+                Utilities.NormalizeCode(
+                    expectedChangedCode);
+
+            //Act
+            var actualContentAfterRefactoring =
+                Utilities.NormalizeCode(
+                    Utilities.ApplyRefactoring(
+                        code,
+                        x => SelectSpanForIdentifier(x, "DoSomethingElse")));
+
+            //Assert
+            Assert.AreEqual(expectedContentAfterRefactoring, actualContentAfterRefactoring);
+        }
+
+
+        [Test]
+        public void InvokingStaticMethodThatTakesInt_PassedIntIsAParameter_AndThereIsACaller_AndWeChooseToRemoveArgument()
+        {
+            //Arrange
+
+            DependencyInjectionHelperCodeRefactoringProvider.WhatToDoWithArguments =
+                arguments => arguments.Select(_ => WhatToDoWithArgument.Remove).ToImmutableArray();
 
             var code =
                 @"
