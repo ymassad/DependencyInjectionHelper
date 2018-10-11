@@ -332,27 +332,42 @@ namespace DependencyInjectionHelper
 
                 LambdaExpressionSyntax CreateLambdaExpression()
                 {
+
+                    var lambdaParameters = 
+                        argsAndWhatToDoWithThem.Where(x => x.whatTodo == WhatToDoWithArgument.Keep)
+                            .Select(x => x.arg.Parameter.Name)
+                            .Select(x => syntaxGenerator.LambdaParameter(x))
+                            .ToList();
+
+
                     if (invokedMethod.ReturnsVoid)
                     {
                         return (LambdaExpressionSyntax) syntaxGenerator.VoidReturningLambdaExpression(
-                            Enumerable.Empty<SyntaxNode>(),
+                            lambdaParameters,
                             syntaxGenerator.InvocationExpression(
                                 SyntaxFactory.IdentifierName(invokedMethodName),
-                                argsAndWhatToDoWithThem.Where(x => x.whatTodo == WhatToDoWithArgument.Remove)
+                                argsAndWhatToDoWithThem
                                     .Select(x =>
                                     {
-                                        var argumentSyntax = (ArgumentSyntax) x.arg.Syntax;
-
-                                        if (semanticModel.GetSymbolInfo(argumentSyntax.Expression).Symbol is
-                                            IParameterSymbol parameter)
+                                        if (x.whatTodo == WhatToDoWithArgument.Remove)
                                         {
-                                            var callerArgumentForParameter = refInvocationOperation.Arguments
-                                                .Where(a => a.Parameter.Equals(parameter)).Select(a => a.Syntax).Single();
+                                            var argumentSyntax = (ArgumentSyntax)x.arg.Syntax;
 
-                                            return callerArgumentForParameter;
+                                            if (semanticModel.GetSymbolInfo(argumentSyntax.Expression).Symbol is
+                                                IParameterSymbol parameter)
+                                            {
+                                                var callerArgumentForParameter = refInvocationOperation.Arguments
+                                                    .Where(a => a.Parameter.Equals(parameter)).Select(a => a.Syntax).Single();
+
+                                                return callerArgumentForParameter;
+                                            }
+
+                                            return argumentSyntax;
                                         }
-
-                                        return argumentSyntax;
+                                        else //Keep
+                                        {
+                                            return syntaxGenerator.IdentifierName(x.arg.Parameter.Name);
+                                        }
                                     })));
                     }
 

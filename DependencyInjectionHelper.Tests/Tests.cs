@@ -354,6 +354,74 @@ public static class Methods
             Assert.AreEqual(expectedContentAfterRefactoring, actualContentAfterRefactoring);
         }
 
+        [Test]
+        public void InvokingStaticMethodThatTakesTwoInts_PassedIntsAreParameters_AndThereIsACaller_AndWeChooseToRemoveTheFirstArgument()
+        {
+            //Arrange
+
+            DependencyInjectionHelperCodeRefactoringProvider.WhatToDoWithArguments =
+                arguments =>
+                    ImmutableArray<WhatToDoWithArgument>.Empty.AddRange(new []{
+                        WhatToDoWithArgument.Remove,
+                        WhatToDoWithArgument.Keep});
+
+            var code =
+                @"
+using System;
+
+public static class Methods
+{
+    public static void Caller()
+    {
+        DoSomething(1 , 2);
+    }
+
+    public static void DoSomething(int param3, int param4)
+    {
+        DoSomethingElse(param3, param4);
+    }
+
+    public static void DoSomethingElse(int param1, int param2)
+    {
+    }
+}";
+
+            var expectedChangedCode =
+                @"
+using System;
+
+public static class Methods
+{
+    public static void Caller()
+    {
+        DoSomething(2, param2 => DoSomethingElse(1, param2));
+    }
+
+    public static void DoSomething(int param4, Action<int> doSomethingElse)
+    {
+        doSomethingElse(param4);
+    }
+
+    public static void DoSomethingElse(int param1, int param2)
+    {
+    }
+}";
+
+            var expectedContentAfterRefactoring =
+                Utilities.NormalizeCode(
+                    expectedChangedCode);
+
+            //Act
+            var actualContentAfterRefactoring =
+                Utilities.NormalizeCode(
+                    Utilities.ApplyRefactoring(
+                        code,
+                        x => SelectSpanForIdentifier(x, "DoSomethingElse")));
+
+            //Assert
+            Assert.AreEqual(expectedContentAfterRefactoring, actualContentAfterRefactoring);
+        }
+
 
         private static TextSpan SelectSpanForIdentifier(SyntaxNode rootNode, string identifierName)
         {
