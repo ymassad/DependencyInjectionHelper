@@ -329,8 +329,6 @@ namespace DependencyInjectionHelper
 
                 var oldArgumentList = refInvocation.ArgumentList;
 
-                var anyArgumentsToRemove = argsAndWhatToDoWithThem.Any(x => x.whatTodo == WhatToDoWithArgument.Remove);
-
                 var syntaxGenerator = SyntaxGenerator.GetGenerator(refDocument);
 
                 var refInvocationOperation = (IInvocationOperation) semanticModel.GetOperation(refInvocation);
@@ -429,10 +427,7 @@ namespace DependencyInjectionHelper
                 foreach (var arg in argumentsToRemove)
                     arguments = arguments.Remove(arg);
 
-                arguments = arguments.Add(SyntaxFactory.Argument(
-                    anyArgumentsToRemove
-                        ? CreateLambdaExpression()
-                        : expressionToInvoke));
+                arguments = arguments.Add(SyntaxFactory.Argument(CreateLambdaExpression()));
 
                 var newArgumentList =
                     oldArgumentList.WithArguments(arguments);

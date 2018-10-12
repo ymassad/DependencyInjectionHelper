@@ -193,7 +193,7 @@ public static class Methods
 {
     public static void Caller()
     {
-        DoSomething(DoSomethingElse);
+        DoSomething(() => DoSomethingElse());
     }
 
     public static void DoSomething(Action doSomethingElse)
@@ -534,7 +534,7 @@ public static class Methods
 
     public static void Caller()
     {
-        DoSomething(new Class1().DoSomethingElse);
+        DoSomething(() => new Class1().DoSomethingElse());
     }
 
     public static void DoSomething(Action doSomethingElse)
@@ -558,6 +558,87 @@ public static class Methods
             //Assert
             Assert.AreEqual(expectedContentAfterRefactoring, actualContentAfterRefactoring);
         }
+
+        [Test]
+        public void InvokingTwoHopInstanceMethodsOnParameter()
+        {
+            //Arrange
+            var code =
+                @"
+using System;
+
+public class Class1
+{
+    public Class1 DoSomethingElse()
+    {
+        return this;
+    }
+
+    public void DoYetAnotherThing()
+    {
+
+    }
+}
+
+public static class Methods
+{
+    public static void Caller()
+    {
+        DoSomething(new Class1());
+    }
+
+    public static void DoSomething(Class1 class1)
+    {
+        class1.DoSomethingElse().DoYetAnotherThing();
+    }
+}";
+
+            var expectedChangedCode =
+                @"
+using System;
+
+public class Class1
+{
+    public Class1 DoSomethingElse()
+    {
+        return this;
+    }
+
+    public void DoYetAnotherThing()
+    {
+
+    }
+}
+
+public static class Methods
+{
+    public static void Caller()
+    {
+        DoSomething(() => new Class1().DoSomethingElse().DoYetAnotherThing());
+    }
+
+    public static void DoSomething(Action doYetAnotherThing)
+    {
+        doYetAnotherThing();
+    }
+
+}";
+
+            var expectedContentAfterRefactoring =
+                Utilities.NormalizeCode(
+                    expectedChangedCode);
+
+            //Act
+            var actualContentAfterRefactoring =
+                Utilities.NormalizeCode(
+                    Utilities.ApplyRefactoring(
+                        code,
+                        x => SelectSpanForIdentifier(x, "DoYetAnotherThing")));
+
+            //Assert
+            Assert.AreEqual(expectedContentAfterRefactoring, actualContentAfterRefactoring);
+        }
+
 
         private static TextSpan SelectSpanForIdentifier(SyntaxNode rootNode, string identifierName)
         {
