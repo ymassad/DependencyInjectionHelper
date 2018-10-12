@@ -156,7 +156,8 @@ namespace DependencyInjectionHelper
                 solution,
                 invocationOperation.TargetMethod,
                 argsAndWhatToDoWithThem,
-                parametersToRemove);
+                parametersToRemove,
+                invocationSyntax);
 
             foreach (var changeToCallers in changesToCallers)
             {
@@ -294,16 +295,17 @@ namespace DependencyInjectionHelper
         private static async Task<List<(Document document, NodeChange change)>> GetChangesToCallers(
             SemanticModel semanticModel,
             CancellationToken cancellationToken,
-            MethodDeclarationSyntax containingMethod,
+            MethodDeclarationSyntax methodContainingCallToExtract,
             Solution solution,
             IMethodSymbol invokedMethod,
             ImmutableArray<(IArgumentOperation arg, WhatToDoWithArgument whatTodo)> argsAndWhatToDoWithThem,
-            ImmutableArray<IParameterSymbol> parametersToRemove)
+            ImmutableArray<IParameterSymbol> parametersToRemove,
+            InvocationExpressionSyntax invocationSyntaxInCallee)
         {
             List<(Document document, NodeChange change)> changes = new List<(Document document, NodeChange change)>();
 
             var usagesOfContainingMethod =
-                (await SymbolFinder.FindReferencesAsync(semanticModel.GetDeclaredSymbol(containingMethod), solution,
+                (await SymbolFinder.FindReferencesAsync(semanticModel.GetDeclaredSymbol(methodContainingCallToExtract), solution,
                     cancellationToken)).ToList();
 
 
@@ -335,9 +337,43 @@ namespace DependencyInjectionHelper
 
                 var invokedMethodName = invokedMethod.Name;
 
+                Maybe<ExpressionSyntax> expressionToUseInCaller = default;
+
+                if (invocationSyntaxInCallee.Expression is MemberAccessExpressionSyntax memberAccess)
+                {
+                    var accessedExpression = memberAccess.Expression;
+
+                    var parametersOfMethodContainingCallToExtract = methodContainingCallToExtract.ParameterList
+                        .Parameters
+                        .Select(x => semanticModel.GetDeclaredSymbol(x))
+                        .ToList();
+
+
+                    var argumentsForParameters =
+                        parametersOfMethodContainingCallToExtract
+                            .ToDictionary(x => x,
+                                x => (ArgumentSyntax) refInvocationOperation.Arguments.Single(a => a.Parameter.Equals(x)).Syntax);
+
+                    var nodesToReplace =
+                        accessedExpression.DescendantNodesAndSelf().OfType<IdentifierNameSyntax>()
+                            .Select(x => (node: x, param: semanticModel.GetSymbolInfo(x).Symbol as IParameterSymbol))
+                            .Where(x => x.param != null && parametersOfMethodContainingCallToExtract.Contains(x.param))
+                            .ToDictionary(x => x.node, x => argumentsForParameters[x.param].Expression);
+
+
+                    expressionToUseInCaller =
+                        accessedExpression.ReplaceNodes(nodesToReplace.Keys, (x, _) => nodesToReplace[x]); 
+                }
+
+                var expressionToInvoke =
+                    expressionToUseInCaller.Match(
+                        exp => (ExpressionSyntax) syntaxGenerator.MemberAccessExpression(exp, invokedMethodName),
+                        () => SyntaxFactory.IdentifierName(invokedMethodName));
+
+       
+
                 LambdaExpressionSyntax CreateLambdaExpression()
                 {
-
                     var lambdaParameters = 
                         argsAndWhatToDoWithThem.Where(x => x.whatTodo == WhatToDoWithArgument.Keep)
                             .Select(x => x.arg.Parameter.Name)
@@ -345,7 +381,7 @@ namespace DependencyInjectionHelper
                             .ToList();
 
                     var invocationExpression = syntaxGenerator.InvocationExpression(
-                        SyntaxFactory.IdentifierName(invokedMethodName),
+                        expressionToInvoke,
                         argsAndWhatToDoWithThem
                             .Select(x =>
                             {
@@ -395,8 +431,8 @@ namespace DependencyInjectionHelper
 
                 arguments = arguments.Add(SyntaxFactory.Argument(
                     anyArgumentsToRemove
-                        ? (ExpressionSyntax) CreateLambdaExpression()
-                        : SyntaxFactory.IdentifierName(invokedMethodName)));
+                        ? CreateLambdaExpression()
+                        : expressionToInvoke));
 
                 var newArgumentList =
                     oldArgumentList.WithArguments(arguments);
