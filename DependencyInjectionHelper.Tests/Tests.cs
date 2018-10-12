@@ -715,6 +715,71 @@ public static class Methods
             Assert.AreEqual(expectedContentAfterRefactoring, actualContentAfterRefactoring);
         }
 
+        [Test]
+        public void InvokingStaticMethodThatTakesInt_ArgumentIsSumOfTwoParameters_AndThereIsACaller_AndWeChooseToRemoveArgument()
+        {
+            //Arrange
+
+            DependencyInjectionHelperCodeRefactoringProvider.WhatToDoWithArguments =
+                arguments => arguments.Select(_ => WhatToDoWithArgument.Remove).ToImmutableArray();
+
+            var code =
+                @"
+using System;
+
+public static class Methods
+{
+    public static void Caller()
+    {
+        DoSomething(1, 2);
+    }
+
+    public static void DoSomething(int param2, int param3)
+    {
+        DoSomethingElse(param2 + param3);
+    }
+
+    public static void DoSomethingElse(int param1)
+    {
+    }
+}";
+
+            var expectedChangedCode =
+                @"
+using System;
+
+public static class Methods
+{
+    public static void Caller()
+    {
+        DoSomething(() => DoSomethingElse(1 + 2));
+    }
+
+    public static void DoSomething(Action doSomethingElse)
+    {
+        doSomethingElse();
+    }
+
+    public static void DoSomethingElse(int param1)
+    {
+    }
+}";
+
+            var expectedContentAfterRefactoring =
+                Utilities.NormalizeCode(
+                    expectedChangedCode);
+
+            //Act
+            var actualContentAfterRefactoring =
+                Utilities.NormalizeCode(
+                    Utilities.ApplyRefactoring(
+                        code,
+                        x => SelectSpanForIdentifier(x, "DoSomethingElse")));
+
+            //Assert
+            Assert.AreEqual(expectedContentAfterRefactoring, actualContentAfterRefactoring);
+        }
+
 
         private static TextSpan SelectSpanForIdentifier(SyntaxNode rootNode, string identifierName)
         {

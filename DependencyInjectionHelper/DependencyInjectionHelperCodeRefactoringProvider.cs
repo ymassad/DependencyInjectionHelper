@@ -230,9 +230,9 @@ namespace DependencyInjectionHelper
 
             var parameters = containingMethodParameterList.Parameters;
 
-            foreach (var parameterSyntaxToRemove in parameterSyntaxesToRemove)
+            foreach (var parameterSyntaxToRemove in parameterSyntaxesToRemove.Select(x => parameters.IndexOf(x)).OrderByDescending(x => x).ToList())
             {
-                parameters = parameters.Remove(parameterSyntaxToRemove);
+                parameters = parameters.RemoveAt(parameterSyntaxToRemove);
             }
 
             parameters = parameters.Add(replacementFunctionParameter);
@@ -335,32 +335,25 @@ namespace DependencyInjectionHelper
 
                 var invokedMethodName = invokedMethod.Name;
 
+                var parametersOfMethodContainingCallToExtract = methodContainingCallToExtract.ParameterList
+                    .Parameters
+                    .Select(x => semanticModel.GetDeclaredSymbol(x))
+                    .ToList();
+
+                var argumentsForParameters =
+                    parametersOfMethodContainingCallToExtract
+                        .ToDictionary(x => x,
+                            x => (ArgumentSyntax)refInvocationOperation.Arguments.Single(a => a.Parameter.Equals(x)).Syntax);
+
                 Maybe<ExpressionSyntax> expressionToUseInCaller = default;
 
                 if (invocationSyntaxInCallee.Expression is MemberAccessExpressionSyntax memberAccess)
                 {
-                    var accessedExpression = memberAccess.Expression;
-
-                    var parametersOfMethodContainingCallToExtract = methodContainingCallToExtract.ParameterList
-                        .Parameters
-                        .Select(x => semanticModel.GetDeclaredSymbol(x))
-                        .ToList();
-
-
-                    var argumentsForParameters =
-                        parametersOfMethodContainingCallToExtract
-                            .ToDictionary(x => x,
-                                x => (ArgumentSyntax) refInvocationOperation.Arguments.Single(a => a.Parameter.Equals(x)).Syntax);
-
-                    var nodesToReplace =
-                        accessedExpression.DescendantNodesAndSelf().OfType<IdentifierNameSyntax>()
-                            .Select(x => (node: x, param: semanticModel.GetSymbolInfo(x).Symbol as IParameterSymbol))
-                            .Where(x => x.param != null && parametersOfMethodContainingCallToExtract.Contains(x.param))
-                            .ToDictionary(x => x.node, x => argumentsForParameters[x.param].Expression);
-
-
                     expressionToUseInCaller =
-                        accessedExpression.ReplaceNodes(nodesToReplace.Keys, (x, _) => nodesToReplace[x]); 
+                        ReplaceUsageOfParametersWithCorrespondingArguments(
+                            semanticModel,
+                            memberAccess.Expression,
+                            argumentsForParameters); 
                 }
 
                 var expressionToInvoke =
@@ -387,16 +380,10 @@ namespace DependencyInjectionHelper
                                 {
                                     var argumentSyntax = (ArgumentSyntax)x.arg.Syntax;
 
-                                    if (semanticModel.GetSymbolInfo(argumentSyntax.Expression).Symbol is
-                                        IParameterSymbol parameter)
-                                    {
-                                        var callerArgumentForParameter = refInvocationOperation.Arguments
-                                            .Where(a => a.Parameter.Equals(parameter)).Select(a => a.Syntax).Single();
+                                    var updatedArgumentExpression =
+                                        ReplaceUsageOfParametersWithCorrespondingArguments(semanticModel, argumentSyntax.Expression, argumentsForParameters);
 
-                                        return callerArgumentForParameter;
-                                    }
-
-                                    return argumentSyntax;
+                                    return syntaxGenerator.Argument(updatedArgumentExpression);
                                 }
                                 else //Keep
                                 {
@@ -424,8 +411,10 @@ namespace DependencyInjectionHelper
                     refInvocationOperation.Arguments.Where(x => parametersToRemove.Contains(x.Parameter))
                         .Select(x => (ArgumentSyntax) x.Syntax);
 
-                foreach (var arg in argumentsToRemove)
-                    arguments = arguments.Remove(arg);
+                foreach (var argToRemove in argumentsToRemove.Select(x => arguments.IndexOf(x)).OrderByDescending(x => x).ToList())
+                {
+                    arguments = arguments.RemoveAt(argToRemove);
+                }
 
                 arguments = arguments.Add(SyntaxFactory.Argument(CreateLambdaExpression()));
 
@@ -439,7 +428,19 @@ namespace DependencyInjectionHelper
             return changes;
         }
 
-  
+        private static ExpressionSyntax ReplaceUsageOfParametersWithCorrespondingArguments(
+            SemanticModel semanticModel,
+            ExpressionSyntax expression,
+            Dictionary<IParameterSymbol, ArgumentSyntax> argumentsForParameters)
+        {
+            var nodesToReplace =
+                expression.DescendantNodesAndSelf().OfType<IdentifierNameSyntax>()
+                    .Select(x => (node: x, param: semanticModel.GetSymbolInfo(x).Symbol as IParameterSymbol))
+                    .Where(x => x.param != null && argumentsForParameters.ContainsKey(x.param))
+                    .ToDictionary(x => x.node, x => argumentsForParameters[x.param].Expression);
+
+            return expression.ReplaceNodes(nodesToReplace.Keys, (x, _) => nodesToReplace[x]);
+        }
 
         private static ParameterSyntax DetermineNewReplacementFunctionParameter(Document document,
             IdentifierNameSyntax invokedMethodIdentifierSyntax, SemanticModel semanticModel,
