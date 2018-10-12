@@ -569,14 +569,13 @@ using System;
 
 public class Class1
 {
-    public Class1 DoSomethingElse()
-    {
-        return this;
-    }
+    public Class2 DoSomethingElse() => new Class2();
+}
 
+public class Class2
+{
     public void DoYetAnotherThing()
     {
-
     }
 }
 
@@ -599,14 +598,13 @@ using System;
 
 public class Class1
 {
-    public Class1 DoSomethingElse()
-    {
-        return this;
-    }
+    public Class2 DoSomethingElse() => new Class2();
+}
 
+public class Class2
+{
     public void DoYetAnotherThing()
     {
-
     }
 }
 
@@ -634,6 +632,84 @@ public static class Methods
                     Utilities.ApplyRefactoring(
                         code,
                         x => SelectSpanForIdentifier(x, "DoYetAnotherThing")));
+
+            //Assert
+            Assert.AreEqual(expectedContentAfterRefactoring, actualContentAfterRefactoring);
+        }
+
+        [Test]
+        public void InvokingTwoHopInstanceMethodsOnParameter_AndExtractingOnlyFirstCall()
+        {
+            //Arrange
+            var code =
+                @"
+using System;
+
+public class Class1
+{
+    public Class2 DoSomethingElse() => new Class2();
+}
+
+public class Class2
+{
+    public void DoYetAnotherThing()
+    {
+    }
+}
+
+public static class Methods
+{
+    public static void Caller()
+    {
+        DoSomething(new Class1());
+    }
+
+    public static void DoSomething(Class1 class1)
+    {
+        class1.DoSomethingElse().DoYetAnotherThing();
+    }
+}";
+
+            var expectedChangedCode =
+                @"
+using System;
+
+public class Class1
+{
+    public Class2 DoSomethingElse() => new Class2();
+}
+
+public class Class2
+{
+    public void DoYetAnotherThing()
+    {
+    }
+}
+
+public static class Methods
+{
+    public static void Caller()
+    {
+        DoSomething(() => new Class1().DoSomethingElse());
+    }
+
+    public static void DoSomething(Func<Class2> doSomethingElse)
+    {
+        doSomethingElse().DoYetAnotherThing();
+    }
+
+}";
+
+            var expectedContentAfterRefactoring =
+                Utilities.NormalizeCode(
+                    expectedChangedCode);
+
+            //Act
+            var actualContentAfterRefactoring =
+                Utilities.NormalizeCode(
+                    Utilities.ApplyRefactoring(
+                        code,
+                        x => SelectSpanForIdentifier(x, "DoSomethingElse")));
 
             //Assert
             Assert.AreEqual(expectedContentAfterRefactoring, actualContentAfterRefactoring);
