@@ -81,6 +81,9 @@ namespace DependencyInjectionHelper.Tests
 
             sut.ComputeRefactoringsAsync(refactoringContext).Wait();
             
+            if(refactoringActions.Count == 0)
+                throw new Exception("No refactoring actions found");
+
             refactoringActions.ForEach(action =>
             {
                 if (refactoringName.HasNoValue || action.Title == refactoringName.GetValue())
