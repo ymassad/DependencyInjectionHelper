@@ -29,5 +29,7 @@ namespace DependencyInjectionHelper
 
             dictionary.Add(key, factory());
         }
+
+        public static Maybe<T> ToMaybe<T>(this T value) => value;
     }
 }

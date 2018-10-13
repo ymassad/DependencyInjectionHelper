@@ -19,7 +19,7 @@ namespace DependencyInjectionHelper
     public class DependencyInjectionHelperCodeRefactoringProvider : CodeRefactoringProvider
     {
 
-        public static Func<ImmutableArray<Argument>, ImmutableArray<WhatToDoWithArgument>> WhatToDoWithArguments;
+        public static Func<ImmutableArray<Argument>, Maybe<ImmutableArray<WhatToDoWithArgument>>> WhatToDoWithArguments;
 
         private static Dictionary<int, Type> ActionTypes = new Dictionary<int, Type>
         {
@@ -67,48 +67,58 @@ namespace DependencyInjectionHelper
         {
             var root = await context.Document.GetSyntaxRootAsync(context.CancellationToken).ConfigureAwait(false);
 
-            var semanticModel = await context.Document.GetSemanticModelAsync();
+            var semanticModel = await context.Document.GetSemanticModelAsync().ConfigureAwait(false);
 
             var node = root.FindNode(context.Span);
 
             if (!(node is IdentifierNameSyntax nameSyntax))
                 return;
 
-            var invocation = GetInvocation(nameSyntax);
+            var invocationSyntax = GetInvocation(nameSyntax);
 
-            if (invocation.HasNoValue)
+            if (invocationSyntax.HasNoValue)
                 return;
+
+
+            var invocationOperation = semanticModel.GetOperation(invocationSyntax.GetValue()) as IInvocationOperation;
+
+            if (invocationOperation == null)
+                return;
+
+            var arguments = invocationOperation.Arguments.Select(x => x.Parameter)
+                .Select(x => new Argument(x.Type, x.Name))
+                .ToImmutableArray();
 
             var action = new MyCodeAction(
                 "Extract as a dependency",
-                c => ExtractDependency(context.Document, invocation.GetValue(), nameSyntax, semanticModel, c));
+                (whatToDoWithArgs, c) => ExtractDependency(
+                    context.Document,
+                    invocationSyntax.GetValue(),
+                    nameSyntax,
+                    semanticModel,
+                    c, invocationOperation, whatToDoWithArgs),
+                () => WhatToDoWithArguments(arguments));
 
             context.RegisterRefactoring(action);
         }
 
-        private async Task<Solution> ExtractDependency(
-            Document document,
+        private async Task<Solution> ExtractDependency(Document document,
             InvocationExpressionSyntax invocationSyntax,
             IdentifierNameSyntax invokedMethodIdentifierSyntax,
             SemanticModel semanticModel,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken, IInvocationOperation invocationOperation,
+            Maybe<ImmutableArray<WhatToDoWithArgument>> whatToDoWithArgsMaybe)
         {
             var solution = document.Project.Solution;
 
-            var documentRoot = await document.GetSyntaxRootAsync(cancellationToken);
-
-            var containingMethod = invocationSyntax.Ancestors().OfType<MethodDeclarationSyntax>().First();
-
-            var invocationOperation = semanticModel.GetOperation(invocationSyntax) as IInvocationOperation;
-
-            if (invocationOperation == null)
+            if (whatToDoWithArgsMaybe.HasNoValue)
                 return solution;
 
-            var whatToDoWithArgs =
-                WhatToDoWithArguments(
-                    invocationOperation.Arguments.Select(x => x.Parameter)
-                        .Select(x => new Argument(x.Type, x.Name))
-                        .ToImmutableArray());
+            var whatToDoWithArgs = whatToDoWithArgsMaybe.GetValue();
+
+            var documentRoot = await document.GetSyntaxRootAsync(cancellationToken).ConfigureAwait(false);
+
+            var containingMethod = invocationSyntax.Ancestors().OfType<MethodDeclarationSyntax>().First();
 
             var nodesToReplace =
                 new Dictionary<Document, List<NodeChange>>();
@@ -157,14 +167,14 @@ namespace DependencyInjectionHelper
                 invocationOperation.TargetMethod,
                 argsAndWhatToDoWithThem,
                 parametersToRemove,
-                invocationSyntax);
+                invocationSyntax).ConfigureAwait(false);
 
             foreach (var changeToCallers in changesToCallers)
             {
                 AddNewChangeToDocument(changeToCallers.document, changeToCallers.change);
             }
 
-            return await UpdateSolution(cancellationToken, solution, nodesToReplace);
+            return await UpdateSolution(cancellationToken, solution, nodesToReplace).ConfigureAwait(false);
         }
 
         private static (NodeChange parameterListChange, string replacementFunctionParameterName,
@@ -278,7 +288,7 @@ namespace DependencyInjectionHelper
 
             foreach (var doc in nodesToReplace.Keys)
             {
-                var root = await doc.GetSyntaxRootAsync(cancellationToken);
+                var root = await doc.GetSyntaxRootAsync(cancellationToken).ConfigureAwait(false);
 
                 var newRoot = root.ReplaceNodes(nodesToReplace[doc].Select(x => x.OldNode),
                     (x, _) =>
@@ -306,14 +316,14 @@ namespace DependencyInjectionHelper
 
             var usagesOfContainingMethod =
                 (await SymbolFinder.FindReferencesAsync(semanticModel.GetDeclaredSymbol(methodContainingCallToExtract), solution,
-                    cancellationToken)).ToList();
+                    cancellationToken).ConfigureAwait(false)).ToList();
 
 
             foreach (var reference in usagesOfContainingMethod.SelectMany(x => x.Locations))
             {
                 var refDocument = reference.Document;
 
-                var refDocumentRoot = await refDocument.GetSyntaxRootAsync(cancellationToken);
+                var refDocumentRoot = await refDocument.GetSyntaxRootAsync(cancellationToken).ConfigureAwait(false);
 
                 var refNode = refDocumentRoot.FindNode(reference.Location.SourceSpan);
 

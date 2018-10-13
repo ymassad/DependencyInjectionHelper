@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Immutable;
 using System.ComponentModel.Design;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
@@ -75,7 +76,21 @@ namespace DependencyInjectionHelper.Vsix
             // Do any initialization that requires the UI thread after switching to the UI thread.
             await this.JoinableTaskFactory.SwitchToMainThreadAsync(cancellationToken);
 
-            //DependencyInjectionHelperCodeRefactoringProvider.action1 = () => MessageBox.Show("Hello");
+
+            DependencyInjectionHelperCodeRefactoringProvider.WhatToDoWithArguments =
+                arguments =>
+                {
+                    var window = new ArgumentsDialogWindow();
+
+                    window.Width = 400;
+                    window.Height = 300;
+
+                    window.ctrlArguments.SetArguments(arguments);
+
+                    window.ShowModal();
+
+                    return window.ctrlArguments.GetResult();
+                };
         }
 
         #endregion

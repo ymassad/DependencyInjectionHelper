@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -8,28 +9,35 @@ using Microsoft.CodeAnalysis.CodeActions;
 
 namespace DependencyInjectionHelper
 {
-    public class MyCodeAction : CodeAction
+    public class MyCodeAction : CodeActionWithOptions
     {
         public override string Title { get; }
 
-        private readonly Func<CancellationToken, Task<Solution>> func;
+        private readonly Func<Maybe<ImmutableArray<WhatToDoWithArgument>>, CancellationToken, Task<Solution>> execute;
+        private readonly Func<Maybe<ImmutableArray<WhatToDoWithArgument>>> getOptions;
 
-        public MyCodeAction(string title, Func<CancellationToken, Task<Solution>> func)
+        public MyCodeAction(
+            string title,
+            Func<Maybe<ImmutableArray<WhatToDoWithArgument>>, CancellationToken, Task<Solution>> execute,
+            Func<Maybe<ImmutableArray<WhatToDoWithArgument>>> getOptions)
         {
             Title = title;
-            this.func = func;
+            this.execute = execute;
+            this.getOptions = getOptions;
         }
 
-        protected override Task<IEnumerable<CodeActionOperation>> ComputePreviewOperationsAsync(CancellationToken cancellationToken)
+        public override object GetOptions(CancellationToken cancellationToken)
         {
-            return Task.FromResult(Enumerable.Empty<CodeActionOperation>());
+            return getOptions();
         }
 
-        protected override Task<Solution> GetChangedSolutionAsync(CancellationToken cancellationToken)
+        protected override async Task<IEnumerable<CodeActionOperation>> ComputeOperationsAsync(object options, CancellationToken cancellationToken)
         {
-            return func(cancellationToken);
+            var opt = (Maybe<ImmutableArray<WhatToDoWithArgument>>) options;
+
+            var newSolution = await execute(opt, cancellationToken);
+
+            return new CodeActionOperation[] {new ApplyChangesOperation(newSolution)};
         }
-
-
     }
 }

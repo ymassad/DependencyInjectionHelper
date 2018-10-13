@@ -1,5 +1,6 @@
 ﻿using System.Collections.Immutable;
 using System.Linq;
+using System.Threading.Tasks;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Text;
@@ -226,8 +227,7 @@ public static class Methods
         {
             //Arrange
 
-            DependencyInjectionHelperCodeRefactoringProvider.WhatToDoWithArguments =
-                arguments => arguments.Select(_ => WhatToDoWithArgument.Remove).ToImmutableArray();
+            ConfigureToRemoveAllArguments();
 
             var code =
                 @"
@@ -286,14 +286,19 @@ public static class Methods
             Assert.AreEqual(expectedContentAfterRefactoring, actualContentAfterRefactoring);
         }
 
+        private static void ConfigureToRemoveAllArguments()
+        {
+            DependencyInjectionHelperCodeRefactoringProvider.WhatToDoWithArguments =
+                arguments => arguments.Select(_ => WhatToDoWithArgument.Remove).ToImmutableArray();
+        }
+
 
         [Test]
         public void InvokingStaticMethodThatTakesInt_PassedIntIsAParameter_AndThereIsACaller_AndWeChooseToRemoveArgument()
         {
             //Arrange
 
-            DependencyInjectionHelperCodeRefactoringProvider.WhatToDoWithArguments =
-                arguments => arguments.Select(_ => WhatToDoWithArgument.Remove).ToImmutableArray();
+            ConfigureToRemoveAllArguments();
 
             var code =
                 @"
@@ -720,8 +725,7 @@ public static class Methods
         {
             //Arrange
 
-            DependencyInjectionHelperCodeRefactoringProvider.WhatToDoWithArguments =
-                arguments => arguments.Select(_ => WhatToDoWithArgument.Remove).ToImmutableArray();
+            ConfigureToRemoveAllArguments();
 
             var code =
                 @"
@@ -779,7 +783,6 @@ public static class Methods
             //Assert
             Assert.AreEqual(expectedContentAfterRefactoring, actualContentAfterRefactoring);
         }
-
 
         private static TextSpan SelectSpanForIdentifier(SyntaxNode rootNode, string identifierName)
         {
