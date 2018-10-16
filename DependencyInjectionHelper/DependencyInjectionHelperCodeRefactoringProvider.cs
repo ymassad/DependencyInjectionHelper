@@ -63,6 +63,22 @@ namespace DependencyInjectionHelper
             }
         }
 
+        public static Maybe<InvocationOrObjectCreation> GetInvocationOrObjectCreation(IdentifierNameSyntax node)
+        {
+            switch (node.Parent)
+            {
+                case InvocationExpressionSyntax invocation:
+                    return new InvocationOrObjectCreation.Invocation(invocation);
+                case ObjectCreationExpressionSyntax objectCreation:
+                    return new InvocationOrObjectCreation.ObjectCreation(objectCreation);
+                case MemberAccessExpressionSyntax memberAccess when memberAccess.Parent is InvocationExpressionSyntax invocation:
+                    return new InvocationOrObjectCreation.Invocation(invocation);
+                default:
+                    return Maybe.NoValue;
+            }
+        }
+
+
         public sealed override async Task ComputeRefactoringsAsync(CodeRefactoringContext context)
         {
             var root = await context.Document.GetSyntaxRootAsync(context.CancellationToken).ConfigureAwait(false);
@@ -89,6 +105,14 @@ namespace DependencyInjectionHelper
                 .Select(x => new Argument(x.Type, x.Name))
                 .ToImmutableArray();
 
+            var containingMethod = invocationSyntax.GetValue().Ancestors().OfType<BaseMethodDeclarationSyntax>().First();
+
+            if (containingMethod is ConstructorDeclarationSyntax constructor &&
+                semanticModel.GetDeclaredSymbol(constructor).IsStatic)
+            {
+                return;
+            }
+
             var action = new MyCodeAction(
                 "Extract as a dependency",
                 (whatToDoWithArgs, c) => ExtractDependency(
@@ -96,7 +120,8 @@ namespace DependencyInjectionHelper
                     invocationSyntax.GetValue(),
                     nameSyntax,
                     semanticModel,
-                    c, invocationOperation, whatToDoWithArgs),
+                    c, invocationOperation, whatToDoWithArgs,
+                    containingMethod),
                 () => WhatToDoWithArguments(arguments));
 
             context.RegisterRefactoring(action);
@@ -107,7 +132,8 @@ namespace DependencyInjectionHelper
             IdentifierNameSyntax invokedMethodIdentifierSyntax,
             SemanticModel semanticModel,
             CancellationToken cancellationToken, IInvocationOperation invocationOperation,
-            Maybe<ImmutableArray<WhatToDoWithArgument>> whatToDoWithArgsMaybe)
+            Maybe<ImmutableArray<WhatToDoWithArgument>> whatToDoWithArgsMaybe,
+            BaseMethodDeclarationSyntax containingMethod)
         {
             var solution = document.Project.Solution;
 
@@ -118,8 +144,7 @@ namespace DependencyInjectionHelper
 
             var documentRoot = await document.GetSyntaxRootAsync(cancellationToken).ConfigureAwait(false);
 
-            var containingMethod = invocationSyntax.Ancestors().OfType<MethodDeclarationSyntax>().First();
-
+    
             var nodesToReplace =
                 new Dictionary<Document, List<NodeChange>>();
 
@@ -183,7 +208,7 @@ namespace DependencyInjectionHelper
                 IdentifierNameSyntax invokedMethodIdentifierSyntax,
                 SemanticModel semanticModel,
                 ImmutableArray<(IArgumentOperation arg, WhatToDoWithArgument whatTodo)> argsAndWhatToDoWithThem,
-                MethodDeclarationSyntax containingMethod,
+                BaseMethodDeclarationSyntax containingMethod,
                 SyntaxNode documentRoot,
                 IInvocationOperation invocationOperation,
                 ImmutableArray<WhatToDoWithArgument> whatToDoWithArgs,
@@ -313,7 +338,7 @@ namespace DependencyInjectionHelper
         private static async Task<List<(Document document, NodeChange change)>> GetChangesToCallers(
             SemanticModel semanticModel,
             CancellationToken cancellationToken,
-            MethodDeclarationSyntax methodContainingCallToExtract,
+            BaseMethodDeclarationSyntax methodContainingCallToExtract,
             Solution solution,
             IMethodSymbol invokedMethod,
             ImmutableArray<(IArgumentOperation arg, WhatToDoWithArgument whatTodo)> argsAndWhatToDoWithThem,
@@ -338,18 +363,23 @@ namespace DependencyInjectionHelper
                 if (!(refNode is IdentifierNameSyntax refNameSyntax))
                     continue;
 
-                var inv = GetInvocation(refNameSyntax);
+                var inv = GetInvocationOrObjectCreation(refNameSyntax);
 
                 if (inv.HasNoValue)
                     continue;
 
                 var refInvocation = inv.GetValue();
 
-                var oldArgumentList = refInvocation.ArgumentList;
+                var oldArgumentList = refInvocation.GetArgumentList();
 
                 var syntaxGenerator = SyntaxGenerator.GetGenerator(refDocument);
 
-                var refInvocationOperation = (IInvocationOperation) semanticModel.GetOperation(refInvocation);
+                var operation = semanticModel.GetOperation(refInvocation.GetSyntax());
+
+                var invocationArgumentOperations =
+                    refInvocation.Match(
+                        invocationCase: _ => ((IInvocationOperation) operation).Arguments,
+                        objectCreationCase: _ => ((IObjectCreationOperation) operation).Arguments);
 
                 var invokedMethodName = invokedMethod.Name;
 
@@ -361,7 +391,7 @@ namespace DependencyInjectionHelper
                 var argumentsForParameters =
                     parametersOfMethodContainingCallToExtract
                         .ToDictionary(x => x,
-                            x => (ArgumentSyntax)refInvocationOperation.Arguments.Single(a => a.Parameter.Equals(x)).Syntax);
+                            x => (ArgumentSyntax)invocationArgumentOperations.Single(a => a.Parameter.Equals(x)).Syntax);
 
                 Maybe<ExpressionSyntax> expressionToUseInCaller = default;
 
@@ -378,8 +408,6 @@ namespace DependencyInjectionHelper
                     expressionToUseInCaller.Match(
                         exp => (ExpressionSyntax) syntaxGenerator.MemberAccessExpression(exp, invokedMethodName),
                         () => SyntaxFactory.IdentifierName(invokedMethodName));
-
-       
 
                 LambdaExpressionSyntax CreateLambdaExpression()
                 {
@@ -426,7 +454,7 @@ namespace DependencyInjectionHelper
                 var arguments = oldArgumentList.Arguments;
 
                 var argumentsToRemove =
-                    refInvocationOperation.Arguments.Where(x => parametersToRemove.Contains(x.Parameter))
+                    invocationArgumentOperations.Where(x => parametersToRemove.Contains(x.Parameter))
                         .Select(x => (ArgumentSyntax) x.Syntax);
 
                 foreach (var argToRemove in argumentsToRemove.Select(x => arguments.IndexOf(x)).OrderByDescending(x => x).ToList())

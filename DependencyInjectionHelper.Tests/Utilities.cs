@@ -50,6 +50,16 @@ namespace DependencyInjectionHelper.Tests
             Maybe<string> refactoringName,
             params MetadataReference[] additionalReferences)
         {
+            return ApplyRefactoring(content, spanSelector, refactoringName, true, additionalReferences);
+        }
+
+        public static string ApplyRefactoring(
+            string content,
+            Func<SyntaxNode, TextSpan> spanSelector,
+            Maybe<string> refactoringName,
+            bool shouldThereBeRefactorings,
+            params MetadataReference[] additionalReferences)
+        {
             var workspace = new AdhocWorkspace();
 
             var solution = workspace.CurrentSolution;
@@ -81,8 +91,21 @@ namespace DependencyInjectionHelper.Tests
 
             sut.ComputeRefactoringsAsync(refactoringContext).Wait();
             
-            if(refactoringActions.Count == 0)
+            
+            if(!shouldThereBeRefactorings)
+            {
+                if (refactoringActions.Count > 0)
+                {
+                    throw new Exception("Some refactoring actions found");
+                }
+
+                return content;
+            }
+
+
+            if (refactoringActions.Count == 0)
                 throw new Exception("No refactoring actions found");
+
 
             refactoringActions.ForEach(action =>
             {

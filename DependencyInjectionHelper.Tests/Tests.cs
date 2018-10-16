@@ -848,6 +848,95 @@ public static class Methods
             Assert.AreEqual(expectedContentAfterRefactoring, actualContentAfterRefactoring);
         }
 
+        [Test]
+        public void InvokingSimpleStaticMethod_ContainingMethodIsAStaticConstructor_NoRefactoringShouldBeFound()
+        {
+            //Arrange
+            var code =
+                @"
+using System;
+
+public static class Methods
+{
+    static Methods()
+    {
+        DoSomethingElse();
+    }
+
+    public static void DoSomethingElse()
+    {
+    }
+}";
+            
+            //Act and assert
+            Utilities.ApplyRefactoring(
+                code,
+                x => SelectSpanForIdentifier(x, "DoSomethingElse"),
+                Maybe.NoValue,
+                shouldThereBeRefactorings: false);
+        }
+
+        [Test]
+        public void InvokingSimpleStaticMethod_ContainingMethodIsAnInstanceConstructor()
+        {
+            //Arrange
+            var code =
+                @"
+using System;
+
+public class Class1
+{
+    public static void Caller()
+    {
+        var instance = new Class1();
+    }
+
+    public Class1()
+    {
+        DoSomethingElse();
+    }
+
+    public static void DoSomethingElse()
+    {
+    }
+}";
+
+            var expectedChangedCode =
+                @"
+using System;
+
+public class Class1
+{
+    public static void Caller()
+    {
+        var instance = new Class1(() => DoSomethingElse());
+    }
+
+    public Class1(Action doSomethingElse)
+    {
+        doSomethingElse();
+    }
+
+    public static void DoSomethingElse()
+    {
+    }
+}";
+
+            var expectedContentAfterRefactoring =
+                Utilities.NormalizeCode(
+                    expectedChangedCode);
+
+            //Act
+            var actualContentAfterRefactoring =
+                Utilities.NormalizeCode(
+                    Utilities.ApplyRefactoring(
+                        code,
+                        x => SelectSpanForIdentifier(x, "DoSomethingElse")));
+
+            //Assert
+            Assert.AreEqual(expectedContentAfterRefactoring, actualContentAfterRefactoring);
+        }
+
 
         private static TextSpan SelectSpanForIdentifier(SyntaxNode rootNode, string identifierName)
         {
