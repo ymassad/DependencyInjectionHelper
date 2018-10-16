@@ -261,11 +261,19 @@ namespace DependencyInjectionHelper
             ImmutableArray<(IArgumentOperation arg, WhatToDoWithArgument whatTodo)> argsAndWhatToDoWithThem,
             string replacementFunctionParameterName)
         {
-            var updatedArguments =
+            var indexesOfArgumentsToRemove =
                 argsAndWhatToDoWithThem.Where(x => x.whatTodo == WhatToDoWithArgument.Remove)
                     .Select(x => x.arg)
-                    .Aggregate(invocationSyntax.ArgumentList.Arguments,
-                        (args, arg) => args.Remove((ArgumentSyntax) arg.Syntax));
+                    .Select(x => invocationSyntax.ArgumentList.Arguments.IndexOf((ArgumentSyntax) x.Syntax))
+                    .OrderByDescending(x => x)
+                    .ToList();
+
+            var updatedArguments = invocationSyntax.ArgumentList.Arguments;
+
+            foreach (var index in indexesOfArgumentsToRemove)
+            {
+                updatedArguments = updatedArguments.RemoveAt(index);
+            }
 
             var updatedInvocationSyntax =
                 invocationSyntax
