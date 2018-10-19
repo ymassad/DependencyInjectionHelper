@@ -356,6 +356,8 @@ namespace DependencyInjectionHelper
             {
                 var refDocument = reference.Document;
 
+                var refDocumentSemanticModel = await refDocument.GetSemanticModelAsync(cancellationToken);
+
                 var refDocumentRoot = await refDocument.GetSyntaxRootAsync(cancellationToken).ConfigureAwait(false);
 
                 var refNode = refDocumentRoot.FindNode(reference.Location.SourceSpan);
@@ -374,14 +376,13 @@ namespace DependencyInjectionHelper
 
                 var syntaxGenerator = SyntaxGenerator.GetGenerator(refDocument);
 
-                var operation = semanticModel.GetOperation(refInvocation.GetSyntax());
+                var operation = refDocumentSemanticModel.GetOperation(refInvocation.GetSyntax());
 
                 var invocationArgumentOperations =
                     refInvocation.Match(
                         invocationCase: _ => ((IInvocationOperation) operation).Arguments,
                         objectCreationCase: _ => ((IObjectCreationOperation) operation).Arguments);
 
-                var invokedMethodName = invokedMethod.Name;
 
                 var parametersOfMethodContainingCallToExtract = methodContainingCallToExtract.ParameterList
                     .Parameters
@@ -393,21 +394,13 @@ namespace DependencyInjectionHelper
                         .ToDictionary(x => x,
                             x => (ArgumentSyntax)invocationArgumentOperations.Single(a => a.Parameter.Equals(x)).Syntax);
 
-                Maybe<ExpressionSyntax> expressionToUseInCaller = default;
-
-                if (invocationSyntaxInCallee.Expression is MemberAccessExpressionSyntax memberAccess)
-                {
-                    expressionToUseInCaller =
-                        ReplaceUsageOfParametersWithCorrespondingArguments(
-                            semanticModel,
-                            memberAccess.Expression,
-                            argumentsForParameters); 
-                }
-
                 var expressionToInvoke =
-                    expressionToUseInCaller.Match(
-                        exp => (ExpressionSyntax) syntaxGenerator.MemberAccessExpression(exp, invokedMethodName),
-                        () => SyntaxFactory.IdentifierName(invokedMethodName));
+                    GetExpressionToInvoke(
+                        semanticModel,
+                        invokedMethod,
+                        invocationSyntaxInCallee,
+                        argumentsForParameters,
+                        syntaxGenerator);
 
                 LambdaExpressionSyntax CreateLambdaExpression()
                 {
@@ -472,6 +465,40 @@ namespace DependencyInjectionHelper
             }
 
             return changes;
+        }
+
+        private static ExpressionSyntax GetExpressionToInvoke(
+            SemanticModel semanticModel,
+            IMethodSymbol invokedMethod,
+            InvocationExpressionSyntax invocationSyntaxInCallee,
+            Dictionary<IParameterSymbol, ArgumentSyntax> argumentsForParameters,
+            SyntaxGenerator syntaxGenerator)
+        {
+            var invokedMethodName = invokedMethod.Name;
+
+            if (invocationSyntaxInCallee.Expression is MemberAccessExpressionSyntax memberAccess)
+            {
+                var expressionToUseInCaller =
+                    ReplaceUsageOfParametersWithCorrespondingArguments(
+                        semanticModel,
+                        memberAccess.Expression,
+                        argumentsForParameters);
+
+                return (ExpressionSyntax) syntaxGenerator.MemberAccessExpression(expressionToUseInCaller, invokedMethodName);
+            }
+
+            if (invocationSyntaxInCallee.Expression is IdentifierNameSyntax)
+            {
+                if (invokedMethod.IsStatic)
+                {
+                    return (ExpressionSyntax) syntaxGenerator.MemberAccessExpression(
+                        syntaxGenerator.IdentifierName(
+                            invokedMethod.ContainingType.GetFullName()),
+                        invokedMethod.Name);
+                }
+            }
+
+            return SyntaxFactory.IdentifierName(invokedMethodName);
         }
 
         private static ExpressionSyntax ReplaceUsageOfParametersWithCorrespondingArguments(

@@ -938,6 +938,95 @@ public class Class1
         }
 
 
+        [Test]
+        public void InvokingSimpleStaticMethod_AndThereIsACallerInADifferentFile()
+        {
+            //Arrange
+            var code =
+                @"
+using System;
+
+public static class Methods
+{
+    public static void DoSomething()
+    {
+        DoSomethingElse();
+    }
+
+    public static void DoSomethingElse()
+    {
+    }
+}";
+
+            var secondFileContent = @"
+using System;
+
+public static class CallerClass
+{
+    public static void Caller()
+    {
+        Methods.DoSomething();
+    }
+}";
+
+            var expectedChangedCode =
+                @"
+using System;
+
+public static class Methods
+{
+    public static void DoSomething(Action doSomethingElse)
+    {
+        doSomethingElse();
+    }
+
+    public static void DoSomethingElse()
+    {
+    }
+}";
+
+            var expectedSecondFileChangedCode =
+                @"
+using System;
+
+public static class CallerClass
+{
+    public static void Caller()
+    {
+        Methods.DoSomething(() => Methods.DoSomethingElse());
+    }
+}";
+
+            var expectedContentAfterRefactoring =
+                Utilities.NormalizeCode(
+                    expectedChangedCode);
+
+            var expectedSecondFileContentAfterRefactoring =
+                Utilities.NormalizeCode(
+                    expectedSecondFileChangedCode);
+
+            //Act
+            var result = Utilities.ApplyRefactoring(
+                code,
+                x => SelectSpanForIdentifier(x, "DoSomethingElse"),
+                Maybe.NoValue,
+                shouldThereBeRefactorings: true,
+                secondFileContent);
+
+            var actualContentAfterRefactoring =
+                Utilities.NormalizeCode(
+                    result.firstFileContent);
+
+            var actualSecondFileContentAfterRefactoring =
+                Utilities.NormalizeCode(
+                    result.secondFileContent.GetValue());
+
+            //Assert
+            Assert.AreEqual(expectedContentAfterRefactoring, actualContentAfterRefactoring);
+            Assert.AreEqual(expectedSecondFileContentAfterRefactoring, actualSecondFileContentAfterRefactoring);
+        }
+
+
         private static TextSpan SelectSpanForIdentifier(SyntaxNode rootNode, string identifierName)
         {
             return rootNode.DescendantNodes()

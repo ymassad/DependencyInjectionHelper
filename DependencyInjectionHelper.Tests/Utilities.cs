@@ -60,6 +60,23 @@ namespace DependencyInjectionHelper.Tests
             bool shouldThereBeRefactorings,
             params MetadataReference[] additionalReferences)
         {
+            return ApplyRefactoring(
+                content,
+                spanSelector,
+                refactoringName,
+                shouldThereBeRefactorings,
+                Maybe.NoValue,
+                additionalReferences).firstFileContent;
+        }
+
+        public static (string firstFileContent, Maybe<string> secondFileContent) ApplyRefactoring(
+            string content,
+            Func<SyntaxNode, TextSpan> spanSelector,
+            Maybe<string> refactoringName,
+            bool shouldThereBeRefactorings,
+            Maybe<string> secondFileContent,
+            params MetadataReference[] additionalReferences)
+        {
             var workspace = new AdhocWorkspace();
 
             var solution = workspace.CurrentSolution;
@@ -71,6 +88,15 @@ namespace DependencyInjectionHelper.Tests
             var documentId = DocumentId.CreateNewId(projectId);
 
             solution = AddNewSourceFile(solution, content, "NewFile.cs", documentId);
+
+            Maybe<DocumentId> document2Id = default;
+
+            if (secondFileContent.HasValue)
+            {
+                document2Id = DocumentId.CreateNewId(projectId);
+
+                solution = AddNewSourceFile(solution, secondFileContent.GetValue(), "NewFile2.cs", document2Id.GetValue());
+            }
 
             var document = solution.GetDocument(documentId);
 
@@ -99,7 +125,7 @@ namespace DependencyInjectionHelper.Tests
                     throw new Exception("Some refactoring actions found");
                 }
 
-                return content;
+                return (content, secondFileContent);
             }
 
 
@@ -122,7 +148,15 @@ namespace DependencyInjectionHelper.Tests
             
             var updatedDocument = workspace.CurrentSolution.GetDocument(documentId);
 
-            return updatedDocument.GetSyntaxRootAsync().Result.GetText().ToString();
+            var updatedSecondDocument = document2Id
+                .ChainValue(x => workspace.CurrentSolution.GetDocument(x));
+
+            var updatedDocumentContent = updatedDocument.GetSyntaxRootAsync().Result.GetText().ToString();
+
+            var updatedSecondDocumentContent =
+                updatedSecondDocument.ChainValue(x => x.GetSyntaxRootAsync().Result.GetText().ToString());
+
+            return (updatedDocumentContent, updatedSecondDocumentContent);
         }
 
         private static Solution AddNewSourceFile(
