@@ -11,6 +11,12 @@ namespace DependencyInjectionHelper.Tests
     [TestFixture]
     public class Tests
     {
+        [SetUp]
+        public void Setup()
+        {
+            ConfigureToKeepAllArguments();
+        }
+
         [Test]
         public void InvokingSimpleStaticMethod()
         {
@@ -285,13 +291,6 @@ public static class Methods
             //Assert
             Assert.AreEqual(expectedContentAfterRefactoring, actualContentAfterRefactoring);
         }
-
-        private static void ConfigureToRemoveAllArguments()
-        {
-            DependencyInjectionHelperCodeRefactoringProvider.WhatToDoWithArguments =
-                arguments => arguments.Select(_ => WhatToDoWithArgument.Remove).ToImmutableArray();
-        }
-
 
         [Test]
         public void InvokingStaticMethodThatTakesInt_PassedIntIsAParameter_AndThereIsACaller_AndWeChooseToRemoveArgument()
@@ -1026,6 +1025,72 @@ public static class CallerClass
             Assert.AreEqual(expectedSecondFileContentAfterRefactoring, actualSecondFileContentAfterRefactoring);
         }
 
+        //This test is created to make sure that the code refactoring does not incorrectly see lambda parameters as method parameters (parameters to the current method where the lambda is used)
+        [Test]
+        public void InvokingStaticMethodThatTakesAFunc_PassingAnIdentityFunction_AndThereIsACaller_AndWeChooseToRemoveArgument()
+        {
+            //Arrange
+
+            ConfigureToRemoveAllArguments();
+
+            var code =
+                @"
+using System;
+
+public static class Methods
+{
+    public static void Caller()
+    {
+        DoSomething(1);
+    }
+
+    public static void DoSomething(int param2)
+    {
+        DoSomethingElse(x => x);
+    }
+
+    public static void DoSomethingElse(Func<int,int> func)
+    {
+    }
+}";
+
+            var expectedChangedCode =
+                @"
+using System;
+
+public static class Methods
+{
+    public static void Caller()
+    {
+        DoSomething(1, () => DoSomethingElse(x => x));
+    }
+
+    public static void DoSomething(int param2, Action doSomethingElse)
+    {
+        doSomethingElse();
+    }
+
+    public static void DoSomethingElse(Func<int,int> func)
+    {
+    }
+}";
+
+            var expectedContentAfterRefactoring =
+                Utilities.NormalizeCode(
+                    expectedChangedCode);
+
+            //Act
+            var actualContentAfterRefactoring =
+                Utilities.NormalizeCode(
+                    Utilities.ApplyRefactoring(
+                        code,
+                        x => SelectSpanForIdentifier(x, "DoSomethingElse")));
+
+            //Assert
+            Assert.AreEqual(expectedContentAfterRefactoring, actualContentAfterRefactoring);
+        }
+
+
 
         private static TextSpan SelectSpanForIdentifier(SyntaxNode rootNode, string identifierName)
         {
@@ -1034,5 +1099,18 @@ public static class CallerClass
                 .Single(x => x.Identifier.Text == identifierName)
                 .Span;
         }
+
+        private static void ConfigureToRemoveAllArguments()
+        {
+            DependencyInjectionHelperCodeRefactoringProvider.WhatToDoWithArguments =
+                arguments => arguments.Select(_ => WhatToDoWithArgument.Remove).ToImmutableArray();
+        }
+
+        private static void ConfigureToKeepAllArguments()
+        {
+            DependencyInjectionHelperCodeRefactoringProvider.WhatToDoWithArguments =
+                arguments => arguments.Select(_ => WhatToDoWithArgument.Keep).ToImmutableArray();
+        }
+
     }
 }

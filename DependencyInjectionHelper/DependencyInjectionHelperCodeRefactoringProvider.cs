@@ -214,6 +214,9 @@ namespace DependencyInjectionHelper
                 ImmutableArray<WhatToDoWithArgument> whatToDoWithArgs,
                 InvocationExpressionSyntax invocationSyntax)
         {
+            var containingMethodSymbol = semanticModel.GetDeclaredSymbol(containingMethod) ??
+                                         throw new Exception("Cannot find symbol for containing method");
+
             var parametersUsedInArgumentsToRemoveAndInInvokedExpression =
                 argsAndWhatToDoWithThem.Where(x => x.whatTodo == WhatToDoWithArgument.Remove)
                     .Select(x => x.arg.Syntax)
@@ -221,6 +224,7 @@ namespace DependencyInjectionHelper
                     .SelectMany(x => x.DescendantNodes().OfType<IdentifierNameSyntax>())
                     .Select(x => semanticModel.GetSymbolInfo(x).Symbol)
                     .OfType<IParameterSymbol>()
+                    .Where(x => x.ContainingSymbol.Equals(containingMethodSymbol))
                     .Distinct()
                     .ToList();
 
