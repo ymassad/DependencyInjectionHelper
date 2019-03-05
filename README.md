@@ -4,6 +4,7 @@ This is a Visual Studio extension that makes it easier to extract a method call 
 
 For example, given this code:
 
+```
 public static class Methods
 {
     public static void Caller()
@@ -18,9 +19,11 @@ public static class Methods
     {
     }
 }
+```
 
 You can use this extension to refactor the call to DoSomethingElse into a function parameter:
 
+```
 public static class Methods
 {
     public static void Caller()
@@ -35,4 +38,5 @@ public static class Methods
     {
     }
 }
+```
 
